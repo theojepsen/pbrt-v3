@@ -249,7 +249,7 @@ Bounds3f Transform::operator()(const Bounds3f &b) const {
 }
 
 Transform Transform::operator*(const Transform &t2) const {
-    return Transform(Matrix4x4::Mul(m, t2.m), Matrix4x4::Mul(t2.mInv, mInv));
+    return Transform(Matrix4x4::Mul(m, t2.m));
 }
 
 bool Transform::SwapsHandedness() const {

@@ -120,22 +120,21 @@ class Transform {
                       mat[1][1], mat[1][2], mat[1][3], mat[2][0], mat[2][1],
                       mat[2][2], mat[2][3], mat[3][0], mat[3][1], mat[3][2],
                       mat[3][3]);
-        mInv = Inverse(m);
     }
-    Transform(const Matrix4x4 &m) : m(m), mInv(Inverse(m)) {}
-    Transform(const Matrix4x4 &m, const Matrix4x4 &mInv) : m(m), mInv(mInv) {}
+    Transform(const Matrix4x4 &m) : m(m) {}
+    Transform(const Matrix4x4 &m, const Matrix4x4 &mInv) : m(m) {}
     void Print(FILE *f) const;
     friend Transform Inverse(const Transform &t) {
-        return Transform(t.mInv, t.m);
+        return Transform(Inverse(t.m));
     }
     friend Transform Transpose(const Transform &t) {
-        return Transform(Transpose(t.m), Transpose(t.mInv));
+        return Transform(Transpose(t.m));
     }
     bool operator==(const Transform &t) const {
-        return t.m == m && t.mInv == mInv;
+        return t.m == m;
     }
     bool operator!=(const Transform &t) const {
-        return t.m != m || t.mInv != mInv;
+        return t.m != m;
     }
     bool operator<(const Transform &t2) const {
         for (int i = 0; i < 4; ++i)
@@ -154,7 +153,7 @@ class Transform {
                 m.m[3][3] == 1.f);
     }
     const Matrix4x4 &GetMatrix() const { return m; }
-    const Matrix4x4 &GetInverseMatrix() const { return mInv; }
+    const Matrix4x4 GetInverseMatrix() const { return Inverse(m); }
     bool HasScale() const {
         Float la2 = (*this)(Vector3f(1, 0, 0)).LengthSquared();
         Float lb2 = (*this)(Vector3f(0, 1, 0)).LengthSquared();
@@ -194,13 +193,13 @@ class Transform {
                           Vector3f *dErrorOut) const;
 
     friend std::ostream &operator<<(std::ostream &os, const Transform &t) {
-        os << "t=" << t.m << ", inv=" << t.mInv;
+        os << "t=" << t.m << ", inv=" << Inverse(t.m);
         return os;
     }
 
   private:
     // Transform Private Data
-    Matrix4x4 m, mInv;
+    Matrix4x4 m;
     friend class AnimatedTransform;
     friend struct Quaternion;
 };
@@ -243,6 +242,8 @@ inline Vector3<T> Transform::operator()(const Vector3<T> &v) const {
 template <typename T>
 inline Normal3<T> Transform::operator()(const Normal3<T> &n) const {
     T x = n.x, y = n.y, z = n.z;
+
+    Matrix4x4 mInv = Inverse(m);
     return Normal3<T>(mInv.m[0][0] * x + mInv.m[1][0] * y + mInv.m[2][0] * z,
                       mInv.m[0][1] * x + mInv.m[1][1] * y + mInv.m[2][1] * z,
                       mInv.m[0][2] * x + mInv.m[1][2] * y + mInv.m[2][2] * z);
