@@ -139,9 +139,6 @@ void CloudBVH::loadTreelet(const uint32_t root_id, istream *stream) const {
             transforms_.push_back(move(make_unique<Transform>(
                 from_protobuf(proto_tp.transform().start_transform()))));
             const Transform *start = transforms_.back().get();
-
-            transforms_.push_back(move(make_unique<Transform>(
-                from_protobuf(proto_tp.transform().end_transform()))));
             const Transform *end = transforms_.back().get();
 
             const AnimatedTransform primitive_to_world{
