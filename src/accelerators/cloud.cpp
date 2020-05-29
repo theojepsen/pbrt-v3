@@ -25,11 +25,6 @@ CloudBVH::CloudBVH(const uint32_t bvh_root, const bool preload_all)
     : bvh_root_(bvh_root), preload_(preload_all) {
     ProfilePhase _(Prof::AccelConstruction);
 
-    if (MaxThreadIndex() > 1 && !preload_all) {
-        throw runtime_error(
-            "Cannot use lazy-loading CloudBVH with multiple threads");
-    }
-
     unique_ptr<Float[]> color(new Float[3]);
     color[0] = 0.f;
     color[1] = 0.5;
@@ -104,11 +99,16 @@ Float CloudBVH::SurfaceAreaUnion() const {
 }
 
 void CloudBVH::loadTreelet(const uint32_t root_id, istream *stream) const {
-    if (preloading_done_ or treelets_.count(root_id)) {
-        return; /* this tree is already loaded */
+    unique_lock<shared_timed_mutex> lock{mutex_};
+
+    if (treelets_.count(root_id)) {
+        return;
     }
 
     ProfilePhase _(Prof::LoadTreelet);
+
+    auto &treelet = treelets_[root_id];
+    auto &tree_primitives = treelet.primitives;
 
     TreeletInfo &info = treelet_info_[root_id];
 
@@ -121,9 +121,6 @@ void CloudBVH::loadTreelet(const uint32_t root_id, istream *stream) const {
         reader = make_unique<protobuf::RecordReader>(stream);
     }
 
-    auto &treelet = treelets_[root_id];
-    auto &tree_primitives = treelet.primitives;
-
     /* read in the triangle meshes for this treelet first */
     uint32_t num_triangle_meshes = 0;
     reader->read(&num_triangle_meshes);
@@ -133,8 +130,7 @@ void CloudBVH::loadTreelet(const uint32_t root_id, istream *stream) const {
         reader->read(&tm);
         TriangleMeshId tm_id = make_pair(root_id, tm.id());
         auto p = triangle_meshes_.emplace(
-            tm_id,
-            make_shared<TriangleMesh>(move(from_protobuf(tm))));
+            tm_id, make_shared<TriangleMesh>(move(from_protobuf(tm))));
         CHECK_EQ(p.second, true);
         triangle_mesh_material_ids_[tm_id] = tm.material_id();
     }
@@ -423,6 +419,8 @@ bool CloudBVH::Intersect(RayState &rayState, SurfaceInteraction *isect) const {
 bool CloudBVH::Intersect(const Ray &ray, SurfaceInteraction *isect) const {
     ProfilePhase _(Prof::AccelIntersect);
 
+    shared_lock<shared_timed_mutex> lock{mutex_};
+
     bool hit = false;
     Vector3f invDir(1 / ray.d.x, 1 / ray.d.y, 1 / ray.d.z);
     int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
@@ -442,7 +440,12 @@ bool CloudBVH::Intersect(const Ray &ray, SurfaceInteraction *isect) const {
 
     uint32_t prevTreelet = startTreelet;
     while (true) {
-        loadTreelet(current.first);
+        if (!treelets_.count(current.first)) {
+            lock.unlock();
+            loadTreelet(current.first);
+            lock.lock();
+        }
+
         auto &treelet = treelets_[current.first];
         auto &node = treelet.nodes[current.second];
 
@@ -506,6 +509,8 @@ bool CloudBVH::Intersect(const Ray &ray, SurfaceInteraction *isect) const {
 bool CloudBVH::IntersectP(const Ray &ray) const {
     ProfilePhase _(Prof::AccelIntersectP);
 
+    shared_lock<shared_timed_mutex> lock{mutex_};
+
     Vector3f invDir(1.f / ray.d.x, 1.f / ray.d.y, 1.f / ray.d.z);
     int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
 
@@ -524,7 +529,12 @@ bool CloudBVH::IntersectP(const Ray &ray) const {
 
     uint32_t prevTreelet = startTreelet;
     while (true) {
-        loadTreelet(current.first);
+        if (!treelets_.count(current.first)) {
+            lock.unlock();
+            loadTreelet(current.first);
+            lock.lock();
+        }
+
         auto &treelet = treelets_[current.first];
         auto &node = treelet.nodes[current.second];
 

@@ -9,6 +9,8 @@
 #include <set>
 #include <stack>
 #include <vector>
+#include <mutex>
+#include <shared_mutex>
 
 #include "pbrt.h"
 #include "pbrt/raystate.h"
@@ -95,6 +97,8 @@ class CloudBVH : public Aggregate {
         const Treelet *treelet_;
         int nodeIdx_;
     };
+
+    mutable std::shared_timed_mutex mutex_;
 
     const std::string bvh_path_;
     const uint32_t bvh_root_;
