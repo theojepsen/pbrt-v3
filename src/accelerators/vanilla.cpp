@@ -33,6 +33,7 @@
 
 // accelerators/bvh.cpp*
 #include "accelerators/vanilla.h"
+#include "shapes/triangle.h"
 #include "interaction.h"
 #include "paramset.h"
 #include "stats.h"
@@ -42,6 +43,7 @@
 namespace pbrt {
 
 STAT_MEMORY_COUNTER("Memory/BVH tree", treeBytes);
+STAT_MEMORY_COUNTER("Memory/Bytes accessed", accessedBytes);
 STAT_RATIO("BVH/Primitives per leaf node", totalPrimitives, totalLeafNodes);
 STAT_COUNTER("BVH/Interior nodes", interiorNodes);
 STAT_COUNTER("BVH/Leaf nodes", leafNodes);
@@ -100,7 +102,7 @@ struct VanillaLinearBVHNode {
     };
     uint16_t nPrimitives;  // 0 -> interior node
     uint8_t axis;          // interior node: xyz
-    uint8_t pad[1];        // ensure 32 byte total size
+    uint8_t loaded;
 };
 
 // VanillaBVHAccel Utility Functions
@@ -136,7 +138,7 @@ inline uint32_t EncodeMorton3(const Vector3f &v) {
     return (LeftShift3(v.z) << 2) | (LeftShift3(v.y) << 1) | LeftShift3(v.x);
 }
 
-static void RadixSort(std::vector<VanillaVanillaMortonPrimitive> *v) {
+static void RadixSort(std::vector<VanillaMortonPrimitive> *v) {
     std::vector<VanillaMortonPrimitive> tempVector(v->size());
     PBRT_CONSTEXPR int bitsPerPass = 6;
     PBRT_CONSTEXPR int nBits = 30;
@@ -156,7 +158,7 @@ static void RadixSort(std::vector<VanillaVanillaMortonPrimitive> *v) {
         PBRT_CONSTEXPR int nBuckets = 1 << bitsPerPass;
         int bucketCount[nBuckets] = {0};
         PBRT_CONSTEXPR int bitMask = (1 << bitsPerPass) - 1;
-        for (const VanillaVanillaMortonPrimitive &mp : in) {
+        for (const VanillaMortonPrimitive &mp : in) {
             int bucket = (mp.mortonCode >> lowBit) & bitMask;
             CHECK_GE(bucket, 0);
             CHECK_LT(bucket, nBuckets);
@@ -640,6 +642,7 @@ VanillaBVHBuildNode *VanillaBVHAccel::buildUpperSAH(MemoryArena &arena,
 int VanillaBVHAccel::flattenBVHTree(VanillaBVHBuildNode *node, int *offset) {
     VanillaLinearBVHNode *linearNode = &nodes[*offset];
     linearNode->bounds = node->bounds;
+    linearNode->loaded = false;
     int myOffset = (*offset)++;
     if (node->nPrimitives > 0) {
         CHECK(!node->children[0] && !node->children[1]);
@@ -670,14 +673,55 @@ bool VanillaBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const
     int nodesToVisit[64];
     while (true) {
         const VanillaLinearBVHNode *node = &nodes[currentNodeIndex];
+        if (!node->loaded) {
+            accessedBytes += sizeof(VanillaLinearBVHNode);
+            ((VanillaLinearBVHNode *)node)->loaded = true;
+        }
         // Check ray against BVH node
         if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
             if (node->nPrimitives > 0) {
                 // Intersect ray with primitives in leaf BVH node
-                for (int i = 0; i < node->nPrimitives; ++i)
+                for (int i = 0; i < node->nPrimitives; ++i) {
                     if (primitives[node->primitivesOffset + i]->Intersect(
                             ray, isect))
                         hit = true;
+
+                    const Primitive *prim = primitives[node->primitivesOffset + i].get();
+                    const TransformedPrimitive *tp = dynamic_cast<const TransformedPrimitive *>(prim);
+                    const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
+
+                    if (tp && loadedTransformedPrims.emplace(tp).second) {
+                        accessedBytes += sizeof(Transform *) * 2;
+                        accessedBytes += sizeof(Primitive *);
+                        auto &animated = tp->GetTransform();
+                        if (loadedTransforms.emplace(animated.StartTransform()).second) {
+                            accessedBytes += sizeof(Transform);
+                        }
+                        if (loadedTransforms.emplace(animated.EndTransform()).second) {
+                            accessedBytes += sizeof(Transform);
+                        }
+                    } else if (gp && loadedGeoPrims.emplace(gp).second) {
+                        const Triangle *tri = dynamic_cast<const Triangle *>(gp->GetShape());
+                        CHECK_NOTNULL(tri);
+                        accessedBytes += sizeof(Triangle);
+                        auto &vertexTracker = loadedMeshVIndices[tri->mesh.get()];
+                        for (int triIdx = 0; triIdx < 3; triIdx++) {
+                            if (vertexTracker.emplace(tri->v[triIdx]).second) {
+                                accessedBytes += sizeof(int);
+                                accessedBytes += sizeof(Point3f);
+                                accessedBytes += sizeof(Normal3f);
+                                accessedBytes += sizeof(Vector3f);
+                                accessedBytes += sizeof(Point2f);
+                            }
+                        }
+
+                        auto &faceTracker = loadedMeshFIndices[tri->mesh.get()];
+                        if (faceTracker.emplace(tri->faceIndex).second) {
+                            accessedBytes += sizeof(int);
+                        }
+                        
+                    }
+                }
                 if (toVisitOffset == 0) break;
                 currentNodeIndex = nodesToVisit[--toVisitOffset];
             } else {
@@ -708,6 +752,10 @@ bool VanillaBVHAccel::IntersectP(const Ray &ray) const {
     int toVisitOffset = 0, currentNodeIndex = 0;
     while (true) {
         const VanillaLinearBVHNode *node = &nodes[currentNodeIndex];
+        if (!node->loaded) {
+            accessedBytes += sizeof(VanillaLinearBVHNode);
+            ((VanillaLinearBVHNode *)node)->loaded = true;
+        }
         if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
             // Process BVH node _node_ for traversal
             if (node->nPrimitives > 0) {
@@ -758,5 +806,11 @@ std::shared_ptr<VanillaBVHAccel> CreateVanillaBVHAccelerator(
     int maxPrimsInNode = ps.FindOneInt("maxnodeprims", 4);
     return std::make_shared<VanillaBVHAccel>(std::move(prims), maxPrimsInNode, splitMethod);
 }
+
+std::unordered_set<const Transform *> VanillaBVHAccel::loadedTransforms {};
+std::unordered_set<const TransformedPrimitive *> VanillaBVHAccel::loadedTransformedPrims {};
+std::unordered_set<const GeometricPrimitive *> VanillaBVHAccel::loadedGeoPrims {};
+std::unordered_map<const TriangleMesh *, std::unordered_set<int>> VanillaBVHAccel::loadedMeshVIndices {};
+std::unordered_map<const TriangleMesh *, std::unordered_set<int>> VanillaBVHAccel::loadedMeshFIndices {};
 
 }  // namespace pbrt

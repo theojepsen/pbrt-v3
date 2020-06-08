@@ -41,6 +41,8 @@
 #include "pbrt.h"
 #include "primitive.h"
 #include <atomic>
+#include <unordered_set>
+#include <unordered_map>
 
 namespace pbrt {
 struct VanillaBVHBuildNode;
@@ -49,6 +51,8 @@ struct VanillaBVHBuildNode;
 struct VanillaBVHPrimitiveInfo;
 struct VanillaMortonPrimitive;
 struct VanillaLinearBVHNode;
+
+class TriangleMesh;
 
 // BVHAccel Declarations
 class VanillaBVHAccel : public Aggregate {
@@ -91,6 +95,11 @@ class VanillaBVHAccel : public Aggregate {
     const SplitMethod splitMethod;
     std::vector<std::shared_ptr<Primitive>> primitives;
     VanillaLinearBVHNode *nodes = nullptr;
+    static std::unordered_set<const Transform *> loadedTransforms;
+    static std::unordered_set<const TransformedPrimitive *> loadedTransformedPrims;
+    static std::unordered_set<const GeometricPrimitive *> loadedGeoPrims;
+    static std::unordered_map<const TriangleMesh *, std::unordered_set<int>> loadedMeshVIndices;
+    static std::unordered_map<const TriangleMesh *, std::unordered_set<int>> loadedMeshFIndices;
 };
 
 std::shared_ptr<VanillaBVHAccel> CreateVanillaBVHAccelerator(
