@@ -8,13 +8,13 @@ Film "image"
 
 # zoom in by feet
 # "integer xresolution" [1500] "integer yresolution" [1500]
-#	"float cropwindow" [ .34 .49  .67 .8 ]
+	"float cropwindow" [ 0.25 0.3125 0.4 0.5 ]
 
 Sampler "halton" "integer pixelsamples" [8]
 
-Integrator "path" "integer maxdepth" [5]
+Integrator "path" "integer maxdepth" [1]
 
-Accelerator "cloudbvh" "bool preload" "true"
+Accelerator "cloudbvh"
 
 WorldBegin
 
