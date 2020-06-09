@@ -682,10 +682,6 @@ bool VanillaBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const
             if (node->nPrimitives > 0) {
                 // Intersect ray with primitives in leaf BVH node
                 for (int i = 0; i < node->nPrimitives; ++i) {
-                    if (primitives[node->primitivesOffset + i]->Intersect(
-                            ray, isect))
-                        hit = true;
-
                     const Primitive *prim = primitives[node->primitivesOffset + i].get();
                     const TransformedPrimitive *tp = dynamic_cast<const TransformedPrimitive *>(prim);
                     const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
@@ -719,8 +715,11 @@ bool VanillaBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const
                         if (faceTracker.emplace(tri->faceIndex).second) {
                             accessedBytes += sizeof(int);
                         }
-                        
                     }
+
+                    if (primitives[node->primitivesOffset + i]->Intersect(
+                            ray, isect))
+                        hit = true;
                 }
                 if (toVisitOffset == 0) break;
                 currentNodeIndex = nodesToVisit[--toVisitOffset];
@@ -760,6 +759,41 @@ bool VanillaBVHAccel::IntersectP(const Ray &ray) const {
             // Process BVH node _node_ for traversal
             if (node->nPrimitives > 0) {
                 for (int i = 0; i < node->nPrimitives; ++i) {
+                    const Primitive *prim = primitives[node->primitivesOffset + i].get();
+                    const TransformedPrimitive *tp = dynamic_cast<const TransformedPrimitive *>(prim);
+                    const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
+
+                    if (tp && loadedTransformedPrims.emplace(tp).second) {
+                        accessedBytes += sizeof(Transform *) * 2;
+                        accessedBytes += sizeof(Primitive *);
+                        auto &animated = tp->GetTransform();
+                        if (loadedTransforms.emplace(animated.StartTransform()).second) {
+                            accessedBytes += sizeof(Transform);
+                        }
+                        if (loadedTransforms.emplace(animated.EndTransform()).second) {
+                            accessedBytes += sizeof(Transform);
+                        }
+                    } else if (gp && loadedGeoPrims.emplace(gp).second) {
+                        const Triangle *tri = dynamic_cast<const Triangle *>(gp->GetShape());
+                        CHECK_NOTNULL(tri);
+                        accessedBytes += sizeof(Triangle);
+                        auto &vertexTracker = loadedMeshVIndices[tri->mesh.get()];
+                        for (int triIdx = 0; triIdx < 3; triIdx++) {
+                            if (vertexTracker.emplace(tri->v[triIdx]).second) {
+                                accessedBytes += sizeof(int);
+                                accessedBytes += sizeof(Point3f);
+                                accessedBytes += sizeof(Normal3f);
+                                accessedBytes += sizeof(Vector3f);
+                                accessedBytes += sizeof(Point2f);
+                            }
+                        }
+
+                        auto &faceTracker = loadedMeshFIndices[tri->mesh.get()];
+                        if (faceTracker.emplace(tri->faceIndex).second) {
+                            accessedBytes += sizeof(int);
+                        }
+                    }
+
                     if (primitives[node->primitivesOffset + i]->IntersectP(
                             ray)) {
                         return true;
