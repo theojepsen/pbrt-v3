@@ -687,6 +687,7 @@ bool VanillaBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const
                     const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
 
                     if (tp && loadedTransformedPrims.emplace(tp).second) {
+                        CHECK_NOTNULL(dynamic_cast<const VanillaBVHAccel *>(tp->GetPrimitive().get()));
                         accessedBytes += sizeof(Transform *) * 2;
                         accessedBytes += sizeof(Primitive *);
                         auto &animated = tp->GetTransform();
