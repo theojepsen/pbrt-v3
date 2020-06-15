@@ -44,6 +44,7 @@ namespace pbrt {
 
 STAT_MEMORY_COUNTER("Memory/BVH tree", treeBytes);
 STAT_MEMORY_COUNTER("Memory/Bytes accessed", accessedBytes);
+STAT_MEMORY_COUNTER("Memory/Total bytes", totalBytes);
 STAT_RATIO("BVH/Primitives per leaf node", totalPrimitives, totalLeafNodes);
 STAT_COUNTER("BVH/Interior nodes", interiorNodes);
 STAT_COUNTER("BVH/Leaf nodes", leafNodes);
@@ -224,6 +225,65 @@ VanillaBVHAccel::VanillaBVHAccel(std::vector<std::shared_ptr<Primitive>> p,
     int offset = 0;
     flattenBVHTree(root, &offset);
     CHECK_EQ(totalNodes, offset);
+
+#if 0
+    std::vector<VanillaLinearBVHNode *> stack;
+    stack.push_back(&nodes[0]);
+    while (!stack.empty()) {
+        auto *node = stack.back();
+        stack.pop_back();
+
+        if (!node->loaded) {
+            totalBytes += sizeof(VanillaLinearBVHNode);
+            ((VanillaLinearBVHNode *)node)->loaded = true;
+        }
+        if (node->nPrimitives > 0) {
+            // Intersect ray with primitives in leaf BVH node
+            for (int i = 0; i < node->nPrimitives; ++i) {
+                const Primitive *prim = primitives[node->primitivesOffset + i].get();
+                const TransformedPrimitive *tp = dynamic_cast<const TransformedPrimitive *>(prim);
+                const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
+
+                if (tp && loadedTransformedPrims.emplace(tp).second) {
+                    totalBytes += sizeof(TransformedPrimitive *);
+                    CHECK_NOTNULL(dynamic_cast<const VanillaBVHAccel *>(tp->GetPrimitive().get()));
+                    totalBytes += sizeof(Transform *) * 2;
+                    totalBytes += sizeof(Primitive *);
+                    auto &animated = tp->GetTransform();
+                    if (loadedTransforms.emplace(animated.StartTransform()).second) {
+                        totalBytes += sizeof(Transform);
+                    }
+                    if (loadedTransforms.emplace(animated.EndTransform()).second) {
+                        totalBytes += sizeof(Transform);
+                    }
+                } else if (gp && loadedGeoPrims.emplace(gp).second) {
+                    totalBytes += sizeof(GeometricPrimitive *);
+                    const Triangle *tri = dynamic_cast<const Triangle *>(gp->GetShape());
+                    CHECK_NOTNULL(tri);
+                    totalBytes += sizeof(Triangle);
+                    auto &vertexTracker = loadedMeshVIndices[tri->mesh.get()];
+                    for (int triIdx = 0; triIdx < 3; triIdx++) {
+                        if (vertexTracker.emplace(tri->v[triIdx]).second) {
+                            totalBytes += sizeof(int);
+                            totalBytes += sizeof(Point3f);
+                            totalBytes += sizeof(Normal3f);
+                            totalBytes += sizeof(Vector3f);
+                            totalBytes += sizeof(Point2f);
+                        }
+                    }
+
+                    auto &faceTracker = loadedMeshFIndices[tri->mesh.get()];
+                    if (faceTracker.emplace(tri->faceIndex).second) {
+                        totalBytes += sizeof(int);
+                    }
+                }
+            }
+        } else {
+            stack.push_back(node + 1);
+            stack.push_back(&nodes[0] + node->secondChildOffset);
+        }
+    }
+#endif
 }
 
 Bounds3f VanillaBVHAccel::WorldBound() const {
@@ -687,6 +747,7 @@ bool VanillaBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const
                     const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
 
                     if (tp && loadedTransformedPrims.emplace(tp).second) {
+                        accessedBytes += sizeof(TransformedPrimitive *);
                         CHECK_NOTNULL(dynamic_cast<const VanillaBVHAccel *>(tp->GetPrimitive().get()));
                         accessedBytes += sizeof(Transform *) * 2;
                         accessedBytes += sizeof(Primitive *);
@@ -698,6 +759,7 @@ bool VanillaBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const
                             accessedBytes += sizeof(Transform);
                         }
                     } else if (gp && loadedGeoPrims.emplace(gp).second) {
+                        accessedBytes += sizeof(GeometricPrimitive *);
                         const Triangle *tri = dynamic_cast<const Triangle *>(gp->GetShape());
                         CHECK_NOTNULL(tri);
                         accessedBytes += sizeof(Triangle);
@@ -765,6 +827,8 @@ bool VanillaBVHAccel::IntersectP(const Ray &ray) const {
                     const GeometricPrimitive *gp = dynamic_cast<const GeometricPrimitive *>(prim);
 
                     if (tp && loadedTransformedPrims.emplace(tp).second) {
+                        accessedBytes += sizeof(TransformedPrimitive *);
+                        CHECK_NOTNULL(dynamic_cast<const VanillaBVHAccel *>(tp->GetPrimitive().get()));
                         accessedBytes += sizeof(Transform *) * 2;
                         accessedBytes += sizeof(Primitive *);
                         auto &animated = tp->GetTransform();
@@ -775,6 +839,7 @@ bool VanillaBVHAccel::IntersectP(const Ray &ray) const {
                             accessedBytes += sizeof(Transform);
                         }
                     } else if (gp && loadedGeoPrims.emplace(gp).second) {
+                        accessedBytes += sizeof(GeometricPrimitive *);
                         const Triangle *tri = dynamic_cast<const Triangle *>(gp->GetShape());
                         CHECK_NOTNULL(tri);
                         accessedBytes += sizeof(Triangle);
