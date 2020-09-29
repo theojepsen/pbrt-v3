@@ -75,6 +75,7 @@ Cloud:
   --loadscene <dir>    Load scene data from <dir>
   --nomaterial         Don't dump the texture information
   --proxydir           Where to find proxies 
+  --bucket             S3 bucket with the treelets
 
 )");
     exit(msg ? 1 : 0);
@@ -169,6 +170,11 @@ int main(int argc, char *argv[]) {
             options.proxyDir = std::string(argv[++i]);
         } else if (!strncmp(argv[i], "--proxydir=", 11)) {
             options.proxyDir = std::string(argv[i] + 11);
+        } else if (!strcmp(argv[i], "--bucket")) {
+            if (i + 1 == argc) {
+                usage("missing value after --bucket argument");
+            }
+            options.sceneBucket = std::string(argv[++i]);
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-help") ||
                    !strcmp(argv[i], "-h")) {
             usage();
