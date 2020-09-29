@@ -45,7 +45,7 @@ class S3Client {
              const S3ClientConfig& config = {});
 
     void download_file(const std::string& bucket, const std::string& object,
-                       const roost::path& filename);
+                       std::string& output);
 };
 
 }  // namespace pbrt
