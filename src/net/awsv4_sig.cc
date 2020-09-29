@@ -2,38 +2,36 @@
 
 #include "awsv4_sig.hh"
 
-#include <cstdio>
-#include <openssl/sha.h>
 #include <openssl/hmac.h>
-#include <sstream>
+#include <openssl/sha.h>
+
+#include <cstdio>
 #include <iostream>
+#include <sstream>
 
 using namespace std;
 using namespace pbrt;
 
 static const string ALGORITHM_ = "AWS4-HMAC-SHA256";
 
-string
-AWSv4Sig::sha256buf_to_string_(const unsigned char *buf) {
-    char sbuf[2*SHA256_DIGEST_LENGTH + 1];
+string AWSv4Sig::sha256buf_to_string_(const unsigned char *buf) {
+    char sbuf[2 * SHA256_DIGEST_LENGTH + 1];
     for (unsigned i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        snprintf(&(sbuf[2*i]), 3, "%2.2x", buf[i]);
+        snprintf(&(sbuf[2 * i]), 3, "%2.2x", buf[i]);
     }
-    return string(sbuf, 2*SHA256_DIGEST_LENGTH);
+    return string(sbuf, 2 * SHA256_DIGEST_LENGTH);
 }
 
-string
-AWSv4Sig::sha256_(const string &in) {
+string AWSv4Sig::sha256_(const string &in) {
     unsigned char buf[SHA256_DIGEST_LENGTH];
     SHA256((const unsigned char *)in.c_str(), in.length(), buf);
     return sha256buf_to_string_(buf);
 }
 
-vector<uint8_t>
-AWSv4Sig::derive_signing_key_(const string &secret,
-                              const string &date,
-                              const string &region,
-                              const string &service) {
+vector<uint8_t> AWSv4Sig::derive_signing_key_(const string &secret,
+                                              const string &date,
+                                              const string &region,
+                                              const string &service) {
     // abundance of caution: don't read from and write to same buffer
     unsigned char buf0[SHA256_DIGEST_LENGTH], buf1[SHA256_DIGEST_LENGTH];
     vector<uint8_t> out(SHA256_DIGEST_LENGTH);
@@ -48,7 +46,8 @@ AWSv4Sig::derive_signing_key_(const string &secret,
 
     // kService = HMAC(kRegion, service)
     HMAC(EVP_sha256(), buf1, SHA256_DIGEST_LENGTH,
-         (const unsigned char *)service.c_str(), service.length(), buf0, nullptr);
+         (const unsigned char *)service.c_str(), service.length(), buf0,
+         nullptr);
 
     // kSigning = HMAC(kService, "aws4_request")
     HMAC(EVP_sha256(), buf0, SHA256_DIGEST_LENGTH,
@@ -57,16 +56,14 @@ AWSv4Sig::derive_signing_key_(const string &secret,
     return out;
 }
 
-void
-AWSv4Sig::sign_request(const std::string & first_line,
-                       const std::string & secret,
-                       const std::string & akid,
-                       const std::string & region,
-                       const std::string & service,
-                       const std::string & request_date,
-                       const std::string & payload __attribute((unused)),
-                       std::map<std::string, std::string> & headers,
-                       const std::string & payload_hash) {
+void AWSv4Sig::sign_request(const std::string &first_line,
+                            const std::string &secret, const std::string &akid,
+                            const std::string &region,
+                            const std::string &service,
+                            const std::string &request_date,
+                            const std::string &payload __attribute((unused)),
+                            std::map<std::string, std::string> &headers,
+                            const std::string &payload_hash) {
     // begin building canonical request
     stringstream req;
     req << first_line << '\n' << '\n';
@@ -77,9 +74,10 @@ AWSv4Sig::sign_request(const std::string & first_line,
         stringstream shead;
         bool first = true;
 
-        for (const auto &hd: headers) {
+        for (const auto &hd : headers) {
             // XXX hd.first should be lowercased
-            // XXX hd.second should be trimmed (no whitespace on sides, collapse middle ws)
+            // XXX hd.second should be trimmed (no whitespace on sides, collapse
+            // middle ws)
             req << hd.first << ':' << hd.second << '\n';
 
             if (!first) {
@@ -95,24 +93,21 @@ AWSv4Sig::sign_request(const std::string & first_line,
     // add in signed headers and payload hash
     string hash_val;
 
-    if ( payload_hash.length() == 0 ) {
-      hash_val = sha256_( payload );
-    }
-    else {
-      hash_val = payload_hash;
+    if (payload_hash.length() == 0) {
+        hash_val = sha256_(payload);
+    } else {
+        hash_val = payload_hash;
     }
 
-
-    req << '\n'
-        << signed_headers << '\n'
-        << hash_val;
+    req << '\n' << signed_headers << '\n' << hash_val;
 
     // hash canonical request
     string canon_req_hash = sha256_(req.str());
 
     // build up credential scope
     req.str("");
-    req << request_date.substr(0, 8) << '/' << region << '/' << service << "/aws4_request";
+    req << request_date.substr(0, 8) << '/' << region << '/' << service
+        << "/aws4_request";
     string cred_scope = req.str();
 
     // build up string to sign
@@ -125,10 +120,8 @@ AWSv4Sig::sign_request(const std::string & first_line,
 
     // derive key and create signature
     unsigned char buf[SHA256_DIGEST_LENGTH];
-    vector<uint8_t> skey = derive_signing_key_(secret,
-                                               request_date.substr(0, 8),
-                                               region,
-                                               service);
+    vector<uint8_t> skey =
+        derive_signing_key_(secret, request_date.substr(0, 8), region, service);
     HMAC(EVP_sha256(), skey.data(), SHA256_DIGEST_LENGTH,
          (const unsigned char *)string_to_sign.c_str(), string_to_sign.length(),
          buf, nullptr);
@@ -136,10 +129,8 @@ AWSv4Sig::sign_request(const std::string & first_line,
 
     // build up authorization header
     req.str("");
-    req << ALGORITHM_
-        << " Credential=" << akid << '/' << cred_scope
-        << ", SignedHeaders=" << signed_headers
-        << ", Signature=" << signature;
+    req << ALGORITHM_ << " Credential=" << akid << '/' << cred_scope
+        << ", SignedHeaders=" << signed_headers << ", Signature=" << signature;
 
     headers["authorization"] = req.str();
     headers["x-amz-content-sha256"] = hash_val;
