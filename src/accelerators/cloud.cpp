@@ -47,56 +47,58 @@ CloudBVH::CloudBVH(const uint32_t bvh_root, const bool preload_all)
     default_material.reset(CreateMatteMaterial(textureParams));
 
     if (preload_all) {
-        /* (1) load all the treelets in parallel */
-        const auto treelet_count = global::manager.treeletCount();
-
-        treelets_.resize(treelet_count + 1);
-
-        ParallelFor([&](int64_t treelet_id) { loadTreeletBase(treelet_id); },
-                    treelet_count);
-
-        /* (2.A) load all the necessary materials */
-        set<uint32_t> required_materials;
-
-        for (size_t i = 0; i < treelet_count; i++) {
-            required_materials.insert(treelets_[i]->required_materials.begin(),
-                                      treelets_[i]->required_materials.end());
-        }
-
-        for (const auto mid : required_materials) {
-            if (materials_.count(mid) == 0) {
-                auto r = global::manager.GetReader(ObjectType::Material, mid);
-                protobuf::Material material;
-                r->read(&material);
-                materials_[mid] = material::from_protobuf(material);
-            }
-        }
-
-        /* (2.B) create all the necessary external instances */
-        set<uint64_t> required_instances;
-
-        for (size_t i = 0; i < treelet_count; i++) {
-            required_instances.insert(treelets_[i]->required_instances.begin(),
-                                      treelets_[i]->required_instances.end());
-        }
-
-        for (const auto rid : required_instances) {
-            if (not bvh_instances_.count(rid)) {
-                bvh_instances_[rid] =
-                    make_shared<ExternalInstance>(*this, (uint16_t)(rid >> 32));
-            }
-        }
-
-        /* (3) finish loading the treelets */
-        ParallelFor(
-            [&](int64_t treelet_id) { finializeTreeletLoad(treelet_id); },
-            treelet_count);
-
+        preload_treelets();
         preloading_done_ = true;
     }
 }
 
 CloudBVH::~CloudBVH() {}
+
+void CloudBVH::preload_treelets() {
+    /* (1) load all the treelets in parallel */
+    const auto treelet_count = global::manager.treeletCount();
+
+    treelets_.resize(treelet_count + 1);
+
+    ParallelFor([&](int64_t treelet_id) { loadTreeletBase(treelet_id); },
+                treelet_count);
+
+    /* (2.A) load all the necessary materials */
+    set<uint32_t> required_materials;
+
+    for (size_t i = 0; i < treelet_count; i++) {
+        required_materials.insert(treelets_[i]->required_materials.begin(),
+                                  treelets_[i]->required_materials.end());
+    }
+
+    for (const auto mid : required_materials) {
+        if (materials_.count(mid) == 0) {
+            auto r = global::manager.GetReader(ObjectType::Material, mid);
+            protobuf::Material material;
+            r->read(&material);
+            materials_[mid] = material::from_protobuf(material);
+        }
+    }
+
+    /* (2.B) create all the necessary external instances */
+    set<uint64_t> required_instances;
+
+    for (size_t i = 0; i < treelet_count; i++) {
+        required_instances.insert(treelets_[i]->required_instances.begin(),
+                                  treelets_[i]->required_instances.end());
+    }
+
+    for (const auto rid : required_instances) {
+        if (not bvh_instances_.count(rid)) {
+            bvh_instances_[rid] =
+                make_shared<ExternalInstance>(*this, (uint16_t)(rid >> 32));
+        }
+    }
+
+    /* (3) finish loading the treelets */
+    ParallelFor([&](int64_t treelet_id) { finializeTreeletLoad(treelet_id); },
+                treelet_count);
+}
 
 Bounds3f CloudBVH::WorldBound() const {
     // The correctness of this function is only guaranteed for the root treelet
