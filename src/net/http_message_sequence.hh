@@ -60,6 +60,7 @@ class HTTPMessageSequence {
     /* getters */
     bool empty() const { return complete_messages_.empty(); }
     const MessageType& front() const { return complete_messages_.front(); }
+    MessageType& front() { return complete_messages_.front(); }
 
     /* pop one request */
     void pop() { complete_messages_.pop(); }
