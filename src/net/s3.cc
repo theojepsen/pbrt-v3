@@ -81,8 +81,8 @@ void S3Client::download_file(const string& bucket, const string& object,
 
         SSLContext ssl_context;
         HTTPResponseParser responses;
-        SecureSocket s3 =
-            ssl_context.new_secure_socket(tcp_connection(s3_address));
+        SecureSocket s3 = ssl_context.new_secure_socket( tcp_connection( s3_address ) );
+        s3.connect();
 
         S3GetRequest request{credentials_, endpoint, config_.region, object};
         HTTPRequest outgoing_request = request.to_http_request();
@@ -115,7 +115,7 @@ void S3Client::download_file(const string& bucket, const string& object,
         const auto status_code = responses.front().status_code();
 
         if (status_code == "200") {
-            output = responses.front().body();
+            output.swap(responses.front().body());
         } else if (status_code[0] == '4') {
             throw runtime_error("HTTP failure in S3Client::download_file");
         } else {
