@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <stack>
+#include <streambuf>
 #include <thread>
 
 #include "bvh.h"
@@ -105,7 +106,7 @@ void CloudBVH::preload_treelets() {
     /* (1) load all the treelets in parallel */
     const auto treelet_count = global::manager.treeletCount();
 
-    treelets_.resize(treelet_count + 1);
+    treelets_.resize(treelet_count);
 
     ParallelFor([&](int64_t treelet_id) { loadTreeletBase(treelet_id); },
                 treelet_count);
@@ -119,13 +120,17 @@ void CloudBVH::preload_treelets() {
 }
 
 void CloudBVH::preload_treelets_from_s3() {
+    struct membuf : streambuf {
+        membuf(char *begin, char *end) { this->setg(begin, begin, end); }
+    };
+
     constexpr size_t TERMINATE = numeric_limits<size_t>::max();
     constexpr size_t DOWNLOAD_THREAD_COUNT = 16;
     const size_t UNPACK_THREAD_COUNT = MaxThreadIndex();
 
     /* (0) preparing treelets vector */
     const auto treelet_count = global::manager.treeletCount();
-    treelets_.resize(treelet_count + 1);
+    treelets_.resize(treelet_count);
 
     /* (1) S3 bucket information */
     const ParsedURI uri{PbrtOptions.sceneBucket};
@@ -145,7 +150,7 @@ void CloudBVH::preload_treelets_from_s3() {
 
     vector<string> downloaded_treelet_data(treelet_count);
 
-    BlockingConcurrentQueue<size_t> treelets_to_download{treelet_count};
+    BlockingConcurrentQueue<size_t> treelets_to_download{};
     BlockingConcurrentQueue<size_t> treelets_to_unpack{};
     size_t unpacked_treelets{0};
 
@@ -171,6 +176,8 @@ void CloudBVH::preload_treelets_from_s3() {
                                         prefix + "/T" + to_string(tid),
                                         downloaded_treelet_data[tid]);
                 treelets_to_unpack.enqueue(tid);
+
+                cerr << ("Downloaded " + to_string(tid) + ".\n");
             }
         });
     }
@@ -183,7 +190,14 @@ void CloudBVH::preload_treelets_from_s3() {
 
                 if (tid == TERMINATE) return;
 
-                loadTreeletBase(tid);
+                membuf buf(&downloaded_treelet_data[tid][0],
+                           &downloaded_treelet_data[tid][0] +
+                               downloaded_treelet_data[tid].size());
+                istream in(&buf);
+
+                loadTreeletBase(tid, &in);
+                downloaded_treelet_data[tid].clear();
+                downloaded_treelet_data[tid].shrink_to_fit();
 
                 {
                     lock_guard<mutex> lock{unpacked_count_mutex};
@@ -191,6 +205,8 @@ void CloudBVH::preload_treelets_from_s3() {
                 }
 
                 unpacked_count_cv.notify_one();
+
+                cerr << ("Unpacked " + to_string(tid) + ".\n");
             }
         });
     }
