@@ -5,7 +5,8 @@
 #include "util/exception.h"
 
 using namespace std;
-using namespace pbrt;
+
+namespace pbrt {
 
 long int strict_atoi(const string &str, const int base) {
     if (str.empty()) {
@@ -44,3 +45,5 @@ double strict_atof(const string &str) {
 
     return ret;
 }
+
+}  // namespace pbrt

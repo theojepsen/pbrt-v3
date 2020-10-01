@@ -1,6 +1,9 @@
 #include "cloud.h"
 
+#include <condition_variable>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <stack>
 #include <thread>
 
@@ -12,10 +15,15 @@
 #include "materials/matte.h"
 #include "messages/serialization.h"
 #include "messages/utils.h"
+#include "net/s3.hh"
+#include "net/uri.hh"
 #include "pbrt.pb.h"
 #include "shapes/triangle.h"
+#include "util/concurrentqueue/blockingconcurrentqueue.h"
+#include "util/concurrentqueue/concurrentqueue.h"
 
 using namespace std;
+using namespace moodycamel;
 
 namespace pbrt {
 
@@ -54,19 +62,11 @@ CloudBVH::CloudBVH(const uint32_t bvh_root, const bool preload_all)
 
 CloudBVH::~CloudBVH() {}
 
-void CloudBVH::preload_treelets() {
-    /* (1) load all the treelets in parallel */
-    const auto treelet_count = global::manager.treeletCount();
-
-    treelets_.resize(treelet_count + 1);
-
-    ParallelFor([&](int64_t treelet_id) { loadTreeletBase(treelet_id); },
-                treelet_count);
-
-    /* (2.A) load all the necessary materials */
+void CloudBVH::load_required_objects() const {
+    /* (A) load all the necessary materials */
     set<uint32_t> required_materials;
 
-    for (size_t i = 0; i < treelet_count; i++) {
+    for (size_t i = 0; i < treelets_.size(); i++) {
         required_materials.insert(treelets_[i]->required_materials.begin(),
                                   treelets_[i]->required_materials.end());
     }
@@ -80,10 +80,10 @@ void CloudBVH::preload_treelets() {
         }
     }
 
-    /* (2.B) create all the necessary external instances */
+    /* (B) create all the necessary external instances */
     set<uint64_t> required_instances;
 
-    for (size_t i = 0; i < treelet_count; i++) {
+    for (size_t i = 0; i < treelets_.size(); i++) {
         required_instances.insert(treelets_[i]->required_instances.begin(),
                                   treelets_[i]->required_instances.end());
     }
@@ -94,8 +94,132 @@ void CloudBVH::preload_treelets() {
                 make_shared<ExternalInstance>(*this, (uint16_t)(rid >> 32));
         }
     }
+}
+
+void CloudBVH::preload_treelets() {
+    if (!PbrtOptions.sceneBucket.empty()) {
+        preload_treelets_from_s3();
+        return;
+    }
+
+    /* (1) load all the treelets in parallel */
+    const auto treelet_count = global::manager.treeletCount();
+
+    treelets_.resize(treelet_count + 1);
+
+    ParallelFor([&](int64_t treelet_id) { loadTreeletBase(treelet_id); },
+                treelet_count);
+
+    /* (2) load all the necessary materials */
+    load_required_objects();
 
     /* (3) finish loading the treelets */
+    ParallelFor([&](int64_t treelet_id) { finializeTreeletLoad(treelet_id); },
+                treelet_count);
+}
+
+void CloudBVH::preload_treelets_from_s3() {
+    constexpr size_t TERMINATE = numeric_limits<size_t>::max();
+    constexpr size_t DOWNLOAD_THREAD_COUNT = 16;
+    const size_t UNPACK_THREAD_COUNT = MaxThreadIndex();
+
+    /* (0) preparing treelets vector */
+    const auto treelet_count = global::manager.treeletCount();
+    treelets_.resize(treelet_count + 1);
+
+    /* (1) S3 bucket information */
+    const ParsedURI uri{PbrtOptions.sceneBucket};
+    const string bucket_name = uri.host;
+    const string prefix = uri.path;
+    const string region = uri.options.at("region");
+
+    const S3ClientConfig s3_client_config{region, ""};
+
+    if (bucket_name.empty() or prefix.empty() or region.empty()) {
+        throw runtime_error("invalid S3 path: " + PbrtOptions.sceneBucket);
+    }
+
+    /* (2) creating threads */
+    vector<thread> download_threads;
+    vector<thread> unpack_threads;
+
+    vector<string> downloaded_treelet_data(treelet_count);
+
+    BlockingConcurrentQueue<size_t> treelets_to_download{treelet_count};
+    BlockingConcurrentQueue<size_t> treelets_to_unpack{};
+    size_t unpacked_treelets{0};
+
+    mutex unpacked_count_mutex;
+    condition_variable unpacked_count_cv;
+
+    for (size_t i = 0; i < treelet_count; i++) {
+        treelets_to_download.enqueue(i);
+    }
+
+    for (size_t i = 0; i < DOWNLOAD_THREAD_COUNT; i++) {
+        download_threads.emplace_back([&] {
+            /* creating an S3 client */
+            S3Client s3_client{{}, s3_client_config};
+
+            while (true) {
+                size_t tid;
+                treelets_to_download.wait_dequeue(tid);
+
+                if (tid == TERMINATE) return;
+
+                s3_client.download_file(bucket_name,
+                                        prefix + "/T" + to_string(tid),
+                                        downloaded_treelet_data[tid]);
+                treelets_to_unpack.enqueue(tid);
+            }
+        });
+    }
+
+    for (size_t i = 0; i < UNPACK_THREAD_COUNT; i++) {
+        unpack_threads.emplace_back([&] {
+            while (true) {
+                size_t tid;
+                treelets_to_unpack.wait_dequeue(tid);
+
+                if (tid == TERMINATE) return;
+
+                loadTreeletBase(tid);
+
+                {
+                    lock_guard<mutex> lock{unpacked_count_mutex};
+                    unpacked_treelets++;
+                }
+
+                unpacked_count_cv.notify_one();
+            }
+        });
+    }
+
+    // wait until all the treelets are loaded
+    {
+        unique_lock<mutex> lock{unpacked_count_mutex};
+        unpacked_count_cv.wait(
+            lock, [&] { return unpacked_treelets == treelet_count; });
+    }
+
+    for (size_t i = 0; i < download_threads.size(); i++) {
+        treelets_to_download.enqueue(TERMINATE);
+    }
+
+    for (size_t i = 0; i < unpack_threads.size(); i++) {
+        treelets_to_unpack.enqueue(TERMINATE);
+    }
+
+    for (auto &t : download_threads) {
+        t.join();
+    }
+
+    for (auto &t : unpack_threads) {
+        t.join();
+    }
+
+    load_required_objects();
+
     ParallelFor([&](int64_t treelet_id) { finializeTreeletLoad(treelet_id); },
                 treelet_count);
 }

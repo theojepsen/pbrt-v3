@@ -31,8 +31,6 @@ class S3GetRequest : public AWSRequest {
 struct S3ClientConfig {
     std::string region{"us-west-1"};
     std::string endpoint{};
-    size_t max_threads{32};
-    size_t max_batch_size{32};
 };
 
 class S3Client {
