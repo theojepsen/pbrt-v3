@@ -61,6 +61,7 @@
 #include "integrators/mlt.h"
 #include "integrators/ao.h"
 #include "integrators/path.h"
+#include "integrators/pathcluster.h"
 #include "integrators/sppm.h"
 #include "integrators/volpath.h"
 #include "integrators/whitted.h"
@@ -2056,6 +2057,8 @@ Integrator *RenderOptions::MakeIntegrator() const {
         integrator = CreateSPPMIntegrator(IntegratorParams, camera);
     } else if (IntegratorName == "cloud") {
         integrator = CreateCloudIntegrator(IntegratorParams, sampler, camera);
+    } else if (IntegratorName == "pathcluster") {
+        integrator = CreatePathClusterIntegrator(IntegratorParams, sampler, camera);
     } else {
         Error("Integrator \"%s\" unknown.", IntegratorName.c_str());
         return nullptr;
