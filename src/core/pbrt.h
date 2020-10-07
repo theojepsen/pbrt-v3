@@ -190,6 +190,7 @@ struct Options {
     // x0, x1, y0, y1
     Float cropWindow[2][2];
     std::string proxyDir {};
+    std::string clusterCoordinator {};
 };
 
 extern Options PbrtOptions;
