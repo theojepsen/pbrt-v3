@@ -1,6 +1,8 @@
 #include "integrators/pathcluster.h"
 
+#include <chrono>
 #include <iostream>
+#include <thread>
 
 #include "bssrdf.h"
 #include "camera.h"
@@ -14,6 +16,11 @@
 #include "sampling.h"
 #include "scene.h"
 #include "stats.h"
+#include "util/httplib.h"
+#include "util/tokenize.h"
+
+using namespace std;
+using namespace chrono;
 
 namespace pbrt {
 
@@ -21,35 +28,76 @@ void PathClusterIntegrator::Render(const Scene &scene) {
     Preprocess(scene, *sampler);
     // Render image tiles in parallel
 
-    // Compute number of tiles, _nTiles_, to use for parallel rendering
-    Bounds2i sampleBounds = camera->film->GetSampleBounds();
-    Vector2i sampleExtent = sampleBounds.Diagonal();
-    const int tileSize = 16;
-    Point2i nTiles((sampleExtent.x + tileSize - 1) / tileSize,
-                   (sampleExtent.y + tileSize - 1) / tileSize);
-    ProgressReporter reporter(nTiles.x * nTiles.y, "Rendering");
-    {
-        ParallelFor2D(
-            [&](Point2i tile) {
-                // Render section of image corresponding to _tile_
+    if (PbrtOptions.clusterCoordinator.empty()) {
+        throw runtime_error("Cluster coordinator address not provided.");
+    }
+
+    while (true) {
+        httplib::Client coordinator(
+            ("http://" + PbrtOptions.clusterCoordinator).c_str());
+
+        auto res = coordinator.Get("/hello");
+        if (res->status == 200) {
+            break;
+        } else {
+            LOG(INFO) << "Retrying /hello...";
+            this_thread::sleep_for(1s);
+        }
+    }
+
+    ParallelFor(
+        [&](int64_t thread_id) {
+            httplib::Client coordinator(
+                ("http://" + PbrtOptions.clusterCoordinator).c_str());
+
+            coordinator.set_keep_alive(true);
+
+            while (true) {
+                auto res = coordinator.Get("/tile");
+                if (res->status != 200) {
+                    LOG(INFO) << "Retrying /tile...";
+                    this_thread::sleep_for(1s);
+                    continue;
+                }
+
+                if (res->body.empty()) {
+                    // waiting on other machines to get ready
+                    LOG(INFO) << "Waiting for tile...";
+                    this_thread::sleep_for(1s);
+                    continue;
+                }
+
+                if (res->body == "DONE") {
+                    LOG(INFO) << "Job done.";
+                    break;
+                }
+
+                const auto tokens = split(res->body, " ");
+
+                if (tokens.size() != 5) {
+                    throw runtime_error("Invalid response from coordinator: " +
+                                        res->body);
+                }
+
+                const auto &tile_id = tokens[0];
+                int x0 = stoi(tokens[1]);
+                int x1 = stoi(tokens[2]);
+                int y0 = stoi(tokens[3]);
+                int y1 = stoi(tokens[4]);
 
                 // Allocate _MemoryArena_ for tile
                 MemoryArena arena;
 
                 // Get sampler instance for tile
-                int seed = tile.y * nTiles.x + tile.x;
-                std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed);
+                int seed = stoi(tile_id);
+                unique_ptr<Sampler> tileSampler = sampler->Clone(seed);
 
                 // Compute sample bounds for tile
-                int x0 = sampleBounds.pMin.x + tile.x * tileSize;
-                int x1 = std::min(x0 + tileSize, sampleBounds.pMax.x);
-                int y0 = sampleBounds.pMin.y + tile.y * tileSize;
-                int y1 = std::min(y0 + tileSize, sampleBounds.pMax.y);
                 Bounds2i tileBounds(Point2i(x0, y0), Point2i(x1, y1));
                 LOG(INFO) << "Starting image tile " << tileBounds;
 
                 // Get _FilmTile_ for tile
-                std::unique_ptr<FilmTile> filmTile =
+                unique_ptr<FilmTile> filmTile =
                     camera->film->GetFilmTile(tileBounds);
 
                 // Loop over pixels in tile to render them
@@ -75,7 +123,7 @@ void PathClusterIntegrator::Render(const Scene &scene) {
                         Float rayWeight =
                             camera->GenerateRayDifferential(cameraSample, &ray);
                         ray.ScaleDifferentials(
-                            1 / std::sqrt((Float)tileSampler->samplesPerPixel));
+                            1 / sqrt((Float)tileSampler->samplesPerPixel));
 
                         // Evaluate radiance along camera ray
                         Spectrum L(0.f);
@@ -99,7 +147,7 @@ void PathClusterIntegrator::Render(const Scene &scene) {
                                 L.y(), pixel.x, pixel.y,
                                 (int)tileSampler->CurrentSampleNumber());
                             L = Spectrum(0.f);
-                        } else if (std::isinf(L.y())) {
+                        } else if (isinf(L.y())) {
                             LOG(ERROR) << StringPrintf(
                                 "Infinite luminance value returned "
                                 "for pixel (%d, %d), sample %d. Setting to "
@@ -122,21 +170,31 @@ void PathClusterIntegrator::Render(const Scene &scene) {
                 LOG(INFO) << "Finished image tile " << tileBounds;
 
                 // Merge image tile into _Film_
-                camera->film->MergeFilmTile(std::move(filmTile));
-                reporter.Update();
-            },
-            nTiles);
-        reporter.Done();
-    }
+                camera->film->MergeFilmTile(move(filmTile));
+
+                while (true) {
+                    auto res = coordinator.Get(("/done?t=" + tile_id).c_str());
+                    if (res->status != 200) {
+                        LOG(INFO) << "Retrying /done...";
+                        this_thread::sleep_for(1s);
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        },
+        MaxThreadIndex());
+
     LOG(INFO) << "Rendering finished";
 
     // Save final image after rendering
     camera->film->WriteImage();
 }
 
-PathIntegrator *CreatePathClusterIntegrator(
-    const ParamSet &params, std::shared_ptr<Sampler> sampler,
-    std::shared_ptr<const Camera> camera) {
+PathIntegrator *CreatePathClusterIntegrator(const ParamSet &params,
+                                            shared_ptr<Sampler> sampler,
+                                            shared_ptr<const Camera> camera) {
     int maxDepth = params.FindOneInt("maxdepth", 5);
     int np;
     const int *pb = params.FindInt("pixelbounds", &np);
@@ -153,7 +211,7 @@ PathIntegrator *CreatePathClusterIntegrator(
         }
     }
     Float rrThreshold = params.FindOneFloat("rrthreshold", 1.);
-    std::string lightStrategy =
+    string lightStrategy =
         params.FindOneString("lightsamplestrategy", "spatial");
     return new PathClusterIntegrator(maxDepth, camera, sampler, pixelBounds,
                                      rrThreshold, lightStrategy);
