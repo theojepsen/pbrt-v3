@@ -43,6 +43,10 @@ class TileManager {
   }
 
   tile_info(i) {
+    if (i === null) {
+      return 'DONE';
+    }
+
     const tile_x = i % this.tiles_x;
     const tile_y = Math.floor(i / this.tiles_y);
     const x0 = tile_x * this.tile_size;
@@ -73,8 +77,7 @@ const width = parseInt(process.argv[i++]);
 const height = parseInt(process.argv[i++]);
 const machines = parseInt(process.argv[i++]);
 const threads = parseInt(process.argv[i++]);
-const total_threads = machines * threads;
-let active_threads = 0;
+let active_machines = 0;
 
 let tile_manager = new TileManager(width, height, 32);
 
@@ -85,7 +88,7 @@ const request_listener = (request, response) => {
   const d = url.parse(request.url, true);
 
   if (d.pathname === "/tile") {
-    const tinfo = (active_threads < total_threads) ? null
+    const tinfo = (active_machines < machines) ? null
       : tile_manager.tile_info(tile_manager.next_tile());
 
     response.statusCode = 200;
@@ -98,7 +101,7 @@ const request_listener = (request, response) => {
     response.end();
   }
   else if (d.pathname === "/hello") {
-    active_threads++;
+    active_machines++;
     response.statusCode = 200;
     response.end();
   }
@@ -110,10 +113,12 @@ const request_listener = (request, response) => {
 };
 
 const print_status = () => {
-  console.log(`active=${Math.ceil(10000 * active_threads / total_threads) / 100}%, assigned=${Math.ceil(10000 * tile_manager.assigned_tiles / tile_manager.total_tiles) / 100}%, finished=${Math.ceil(10000 * tile_manager.finished_tiles.size / tile_manager.total_tiles) / 100}%`);
+  console.log(`active=${Math.ceil(10000 * active_machines / machines) / 100}%, ` +
+    `assigned=${Math.ceil(10000 * tile_manager.assigned_tiles / tile_manager.total_tiles) / 100}%, ` +
+    `finished=${Math.ceil(10000 * tile_manager.finished_tiles.size / tile_manager.total_tiles) / 100}%`);
 };
 
-setInterval(print_status, 2000);
+setInterval(print_status, 1000);
 
 const server = http.createServer(request_listener);
 server.listen(port, "0.0.0.0");
