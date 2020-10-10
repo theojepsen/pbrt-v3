@@ -63,11 +63,11 @@ class TileManager {
 }
 
 let usage = () => {
-  console.log("coordinator.js PORT WIDTH HEIGHT MACHINES THREADS-PER-MACHINE");
+  console.log("coordinator.js PORT WIDTH HEIGHT MACHINES THREADS-PER-MACHINE TILE-SIZE");
   process.exit(1);
 }
 
-if (process.argv.length < 7) {
+if (process.argv.length < 8) {
   usage();
 }
 
@@ -77,9 +77,10 @@ const width = parseInt(process.argv[i++]);
 const height = parseInt(process.argv[i++]);
 const machines = parseInt(process.argv[i++]);
 const threads = parseInt(process.argv[i++]);
+const tile_size = parseInt(process.argv[i++]);
 let active_machines = 0;
 
-let tile_manager = new TileManager(width, height, 32);
+let tile_manager = new TileManager(width, height, tile_size);
 
 console.log(`— image size: ${width}x${height}`);
 console.log(`— cluster size: ${threads}x${machines}`);
@@ -118,7 +119,7 @@ const print_status = () => {
     `finished=${Math.ceil(10000 * tile_manager.finished_tiles.size / tile_manager.total_tiles) / 100}%`);
 };
 
-setInterval(print_status, 1000);
+setInterval(print_status, 5000);
 
 const server = http.createServer(request_listener);
 server.listen(port, "0.0.0.0");
