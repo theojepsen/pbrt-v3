@@ -75,6 +75,7 @@ Cloud:
   --loadscene <dir>    Load scene data from <dir>
   --nomaterial         Don't dump the texture information
   --proxydir           Where to find proxies 
+  --nostats            Don't print pbrt stats at the end
   --coordinator        Cluster coordinator address
 
 )");
@@ -175,6 +176,8 @@ int main(int argc, char *argv[]) {
                 usage("missing value after --coordinator argument");
             }
             options.clusterCoordinator = std::string(argv[++i]);
+        } else if (!strcmp(argv[i], "--nostats")) {
+            options.noStats = true;
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-help") ||
                    !strcmp(argv[i], "-h")) {
             usage();
