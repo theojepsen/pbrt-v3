@@ -2038,15 +2038,27 @@ Integrator *RenderOptions::MakeIntegrator() const {
                                           camera->film->GetSampleBounds()));
     }
 
+    if (!PbrtOptions.clusterCoordinator.empty() && IntegratorName != "path" &&
+        IntegratorName != "pathcluster") {
+        Error(
+            "Cluster coordinator can only be used with pathcluster integrator");
+        return nullptr;
+    }
+
     Integrator *integrator = nullptr;
     if (IntegratorName == "whitted")
         integrator = CreateWhittedIntegrator(IntegratorParams, sampler, camera);
     else if (IntegratorName == "directlighting")
         integrator =
             CreateDirectLightingIntegrator(IntegratorParams, sampler, camera);
-    else if (IntegratorName == "path")
-        integrator = CreatePathIntegrator(IntegratorParams, sampler, camera);
-    else if (IntegratorName == "volpath")
+    else if (IntegratorName == "path") {
+        if (PbrtOptions.clusterCoordinator.empty()) {
+            integrator = CreatePathIntegrator(IntegratorParams, sampler, camera);
+        }
+        else {
+            integrator = CreatePathClusterIntegrator(IntegratorParams, sampler, camera);
+        }
+    } else if (IntegratorName == "volpath")
         integrator = CreateVolPathIntegrator(IntegratorParams, sampler, camera);
     else if (IntegratorName == "bdpt") {
         integrator = CreateBDPTIntegrator(IntegratorParams, sampler, camera);
