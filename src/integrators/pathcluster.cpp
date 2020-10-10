@@ -77,8 +77,10 @@ void PathClusterIntegrator::Render(const Scene &scene) {
                 const auto tokens = split(res->body, " ");
 
                 if (tokens.size() != 5) {
-                    throw runtime_error("Invalid response from coordinator: " +
-                                        res->body);
+                    LOG(INFO)
+                        << "Invalid response from coordinator: " << res->body;
+                    this_thread::sleep_for(1s);
+                    continue;
                 }
 
                 const auto &tile_id = tokens[0];
