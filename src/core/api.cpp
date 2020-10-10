@@ -1877,6 +1877,7 @@ void pbrtWorldEnd() {
         ProfilerState = ProfToBits(Prof::IntegratorRender);
 
         __timepoints.render_start = TimePoints::clock::now();
+        __timepoints.wait_for_coordinator_ended = __timepoints.render_start;
         if (scene && integrator) integrator->Render(*scene);
         __timepoints.render_end = TimePoints::clock::now();
 

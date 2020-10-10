@@ -240,6 +240,7 @@ int main(int argc, char *argv[]) {
     PRINT_DURATION(accelerator_creation_end);
     PRINT_DURATION(scene_creation_end);
     PRINT_DURATION(render_start);
+    PRINT_DURATION(wait_for_coordinator_ended);
     PRINT_DURATION(render_end);
     PRINT_DURATION(job_end);
 

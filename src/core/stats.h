@@ -57,6 +57,7 @@ struct TimePoints {
     clock::time_point accelerator_creation_end{};
     clock::time_point scene_creation_end{};
     clock::time_point render_start{};
+    clock::time_point wait_for_coordinator_ended{};
     clock::time_point render_end{};
     clock::time_point job_end{};
 };

@@ -45,6 +45,8 @@ void PathClusterIntegrator::Render(const Scene &scene) {
         }
     }
 
+    __timepoints.wait_for_coordinator_ended = TimePoints::clock::now();
+
     ParallelFor(
         [&](int64_t thread_id) {
             httplib::Client coordinator(
