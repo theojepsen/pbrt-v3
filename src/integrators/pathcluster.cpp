@@ -37,10 +37,10 @@ void PathClusterIntegrator::Render(const Scene &scene) {
             ("http://" + PbrtOptions.clusterCoordinator).c_str());
 
         auto res = coordinator.Get("/hello");
-        if (res->status == 200) {
+        if (res && res->status == 200) {
             break;
         } else {
-            LOG(INFO) << "Retrying /hello...";
+            cerr << "Retrying /hello...:\n";
             this_thread::sleep_for(1s);
         }
     }
@@ -56,21 +56,29 @@ void PathClusterIntegrator::Render(const Scene &scene) {
 
             while (true) {
                 auto res = coordinator.Get("/tile");
+
+                if (!res) {
+                    cerr << ("Error /tile: " +
+                             to_string(static_cast<int>(res.error())) + '\n');
+                    this_thread::sleep_for(1s);
+                    continue;
+                }
+
                 if (res->status != 200) {
-                    LOG(INFO) << "Retrying /tile...";
+                    cerr << "Retrying /tile...\n";
                     this_thread::sleep_for(1s);
                     continue;
                 }
 
                 if (res->body.empty()) {
                     // waiting on other machines to get ready
-                    LOG(INFO) << "Waiting for tile...";
+                    cerr << "Waiting for tile...\n";
                     this_thread::sleep_for(1s);
                     continue;
                 }
 
                 if (res->body == "DONE") {
-                    LOG(INFO) << "Job done.";
+                    cerr << "Job done.\n";
                     break;
                 }
 
@@ -178,8 +186,10 @@ void PathClusterIntegrator::Render(const Scene &scene) {
 
                 while (true) {
                     auto res = coordinator.Get(("/done?t=" + tile_id).c_str());
-                    if (res->status != 200) {
-                        LOG(INFO) << "Retrying /done...";
+                    if (!res || res->status != 200) {
+                        cerr << ("Retrying /done...:" +
+                                 to_string(static_cast<int>(res.error())) +
+                                 '\n');
                         this_thread::sleep_for(1s);
                         continue;
                     } else {
