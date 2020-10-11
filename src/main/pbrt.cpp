@@ -225,26 +225,7 @@ int main(int argc, char *argv[]) {
     __timepoints.job_end = TimePoints::clock::now();
 
     // Printing datapoints
-
-#define PRINT_DURATION(x)                                         \
-    printf("timepoint:" #x "=%0.3f\n",                                    \
-           std::chrono::duration_cast<std::chrono::milliseconds>( \
-               __timepoints.x - __timepoints.job_start)           \
-                   .count() /                                     \
-               1e3);
-
-    PRINT_DURATION(job_start);
-    PRINT_DURATION(parsing_start);
-    PRINT_DURATION(parsing_end);
-    PRINT_DURATION(accelerator_creation_start);
-    PRINT_DURATION(accelerator_creation_end);
-    PRINT_DURATION(scene_creation_end);
-    PRINT_DURATION(render_start);
-    PRINT_DURATION(wait_for_coordinator_ended);
-    PRINT_DURATION(render_end);
-    PRINT_DURATION(job_end);
-
-#undef PRINT_DURATION
+    __timepoints.print();
 
     return 0;
 }

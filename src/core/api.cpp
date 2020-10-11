@@ -1881,6 +1881,11 @@ void pbrtWorldEnd() {
         if (scene && integrator) integrator->Render(*scene);
         __timepoints.render_end = TimePoints::clock::now();
 
+        if (PbrtOptions.noStats) {
+            __timepoints.print();
+            _exit(0);
+        }
+
         CHECK_EQ(CurrentProfilerState(), ProfToBits(Prof::IntegratorRender));
         ProfilerState = ProfToBits(Prof::SceneConstruction);
     }

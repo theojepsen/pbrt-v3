@@ -60,6 +60,8 @@ struct TimePoints {
     clock::time_point wait_for_coordinator_ended{};
     clock::time_point render_end{};
     clock::time_point job_end{};
+
+    void print() const;
 };
 
 extern TimePoints __timepoints;
