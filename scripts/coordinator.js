@@ -38,7 +38,7 @@ class TileManager {
     }
 
     const t = this.remaining_tiles.pop();
-    this.assigned_tiles++
+    this.assigned_tiles++;
     return t;
   }
 
@@ -48,7 +48,7 @@ class TileManager {
     }
 
     const tile_x = i % this.tiles_x;
-    const tile_y = Math.floor(i / this.tiles_y);
+    const tile_y = Math.floor(i / this.tiles_x);
     const x0 = tile_x * this.tile_size;
     const y0 = tile_y * this.tile_size;
     const x1 = Math.min(x0 + this.tile_size, width);
