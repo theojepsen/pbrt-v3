@@ -47,38 +47,26 @@ void PathClusterIntegrator::Render(const Scene &scene) {
 
     __timepoints.wait_for_coordinator_ended = TimePoints::clock::now();
 
+    constexpr milliseconds WAIT_BEFORE_RETRY = 500ms;
+
     ParallelFor(
         [&](int64_t thread_id) {
             httplib::Client coordinator(
                 ("http://" + PbrtOptions.clusterCoordinator).c_str());
 
-            coordinator.set_keep_alive(true);
+            coordinator.set_keep_alive(false);
 
             while (true) {
                 auto res = coordinator.Get("/tile");
 
-                if (!res) {
-                    cerr << ("Error /tile: " +
-                             to_string(static_cast<int>(res.error())) + '\n');
-                    this_thread::sleep_for(1s);
-                    continue;
-                }
-
-                if (res->status != 200) {
-                    cerr << "Retrying /tile...\n";
-                    this_thread::sleep_for(1s);
-                    continue;
-                }
-
-                if (res->body.empty()) {
-                    // waiting on other machines to get ready
-                    cerr << "Waiting for tile...\n";
-                    this_thread::sleep_for(1s);
+                if (!res || res->status != 200 || res->body.empty()) {
+                    LOG(INFO) << "Error /tile";
+                    this_thread::sleep_for(WAIT_BEFORE_RETRY);
                     continue;
                 }
 
                 if (res->body == "DONE") {
-                    cerr << "Job done.\n";
+                    LOG(INFO) << "Job done.";
                     break;
                 }
 
@@ -187,10 +175,8 @@ void PathClusterIntegrator::Render(const Scene &scene) {
                 while (true) {
                     auto res = coordinator.Get(("/done?t=" + tile_id).c_str());
                     if (!res || res->status != 200) {
-                        cerr << ("Retrying /done...:" +
-                                 to_string(static_cast<int>(res.error())) +
-                                 '\n');
-                        this_thread::sleep_for(1s);
+                        LOG(INFO) << "Retrying /done...:";
+                        this_thread::sleep_for(WAIT_BEFORE_RETRY);
                         continue;
                     } else {
                         break;
