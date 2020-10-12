@@ -125,6 +125,8 @@
 #include "cloud/manager.h"
 
 #include <map>
+#include <chrono>
+#include <thread>
 #include <stdio.h>
 #include <fstream>
 
@@ -1883,6 +1885,7 @@ void pbrtWorldEnd() {
 
         if (PbrtOptions.noStats) {
             __timepoints.print();
+            std::this_thread::sleep_for(std::chrono::seconds(15));
             _exit(0);
         }
 

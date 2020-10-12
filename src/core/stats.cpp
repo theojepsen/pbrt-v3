@@ -70,6 +70,7 @@ void TimePoints::print() const {
     PRINT_DURATION(wait_for_coordinator_ended);
     PRINT_DURATION(render_end);
     PRINT_DURATION(job_end);
+    fflush(stdout);
 
 #undef PRINT_DURATION
 }
