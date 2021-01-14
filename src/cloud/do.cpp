@@ -2,6 +2,9 @@
 #include <queue>
 #include <string>
 #include <vector>
+#include <map>
+#include <fstream>
+#include <chrono>
 
 #include "accelerators/cloud.h"
 #include "cloud/manager.h"
@@ -55,6 +58,12 @@ Scene loadFakeScene() {
 enum class Operation { Trace, Shade };
 
 int main(int argc, char const *argv[]) {
+
+    map<TreeletId, unsigned> rays_per_treelet;
+    map<TreeletId, vector<uint64_t> > times_per_treelet;
+    map<uint64_t, vector<TreeletId> > treelets_per_path;
+    map<uint64_t, uint64_t> time_per_path;
+
     try {
         if (argc <= 0) {
             abort();
@@ -85,6 +94,8 @@ int main(int argc, char const *argv[]) {
                 if (reader.read(&rayStr)) {
                     auto rayStatePtr = RayState::Create();
                     rayStatePtr->Deserialize(rayStr.data(), rayStr.length());
+                    treelets_per_path[rayStatePtr->PathID()] = vector<TreeletId>();
+                    time_per_path[rayStatePtr->PathID()] = 0;
                     rayList.push(move(rayStatePtr));
                 }
             }
@@ -110,7 +121,11 @@ int main(int argc, char const *argv[]) {
         /* let's load all the treelets */
         for (size_t i = 0; i < treelets.size(); i++) {
             treelets[i] = make_unique<CloudBVH>(i);
+            rays_per_treelet[i] = 0;
+            times_per_treelet[i] = vector<uint64_t>();
         }
+
+        cerr << treelets.size() << " total treelets" << endl;
 
         for (auto &light : lights) {
             light->Preprocess(fakeScene);
@@ -125,7 +140,12 @@ int main(int argc, char const *argv[]) {
             rayList.pop();
 
             const TreeletId rayTreeletId = theRay.CurrentTreelet();
+            const uint64_t pathID = theRay.PathID();
 
+            //rays_per_treelet[rayTreeletId]++;
+            //treelets_per_path[pathID].push_back(rayTreeletId);
+
+            auto start = chrono::high_resolution_clock::now();
             if (!theRay.toVisitEmpty()) {
                 auto newRayPtr = graphics::TraceRay(move(theRayPtr),
                                                     *treelets[rayTreeletId]);
@@ -161,6 +181,11 @@ int main(int argc, char const *argv[]) {
                     rayList.push(move(shadowRay));
                 }
             }
+            auto end = chrono::high_resolution_clock::now();
+
+            auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
+            time_per_path[pathID] += elapsed_ns;
+            times_per_treelet[rayTreeletId].push_back(elapsed_ns);
         }
 
         graphics::AccumulateImage(camera, samples);
@@ -169,6 +194,31 @@ int main(int argc, char const *argv[]) {
         print_exception(argv[0], e);
         return EXIT_FAILURE;
     }
+
+    //ofstream rays_per_treelet_file("rays_per_treelet.txt");
+    //for (auto const& x : rays_per_treelet) rays_per_treelet_file << x.first << " " << x.second << endl;
+    //rays_per_treelet_file.close();
+
+    //ofstream treelets_per_path_file("treelets_per_path.txt");
+    //for (auto const& x : treelets_per_path) {
+    //  treelets_per_path_file << x.first;
+    //  for (auto const& tid : x.second) treelets_per_path_file << " " << tid;
+    //  treelets_per_path_file << endl;
+    //}
+    //treelets_per_path_file.close();
+
+    ofstream time_per_path_file("time_per_path.txt");
+    for (auto const& x : time_per_path) time_per_path_file << x.first << " " <<  x.second << endl;
+    time_per_path_file.close();
+
+    ofstream times_per_treelet_file("times_per_treelet.txt");
+    for (auto const& x : times_per_treelet) {
+      times_per_treelet_file << x.first;
+      for (auto const& t: x.second) times_per_treelet_file << " " << t;
+      times_per_treelet_file << endl;
+    }
+    times_per_treelet_file.close();
+
 
     return EXIT_SUCCESS;
 }
