@@ -14,7 +14,7 @@ Sampler "halton" "integer pixelsamples" [4]
 
 Integrator "path" "integer maxdepth" [5]
 
-Accelerator "bvh" "integer dumptreeletsize" [95000]
+Accelerator "treeletdumpbvh" "integer maxtreeletbytes" [95000] "string partition" ["nvidia"] "string traversal" ["sendcheck"] "integer copyablethreshold" [0]
 
 WorldBegin
 
