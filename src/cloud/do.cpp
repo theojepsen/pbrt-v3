@@ -57,12 +57,21 @@ Scene loadFakeScene() {
 
 enum class Operation { Trace, Shade };
 
+struct trace_edge {
+  int nodeID;
+  int prevNodeID;
+  TreeletId treeletID;
+  long int elapsed_ns;
+};
+
 int main(int argc, char const *argv[]) {
 
     map<TreeletId, unsigned> rays_per_treelet;
     map<TreeletId, vector<uint64_t> > times_per_treelet;
     map<uint64_t, vector<TreeletId> > treelets_per_path;
     map<uint64_t, uint64_t> time_per_path;
+    map<uint64_t, vector<struct trace_edge> > trace_per_path;
+    unsigned ray_cntr = 0;
 
     try {
         if (argc <= 0) {
@@ -83,6 +92,7 @@ int main(int argc, char const *argv[]) {
         global::manager.init(scenePath);
 
         queue<RayStatePtr> rayList;
+        queue<int> prevNodes;
         vector<Sample> samples;
 
         /* loading all the rays */
@@ -96,7 +106,9 @@ int main(int argc, char const *argv[]) {
                     rayStatePtr->Deserialize(rayStr.data(), rayStr.length());
                     treelets_per_path[rayStatePtr->PathID()] = vector<TreeletId>();
                     time_per_path[rayStatePtr->PathID()] = 0;
+                    trace_per_path[rayStatePtr->PathID()] = vector<struct trace_edge>();
                     rayList.push(move(rayStatePtr));
+                    prevNodes.push(-1);
                 }
             }
         }
@@ -138,14 +150,20 @@ int main(int argc, char const *argv[]) {
             RayStatePtr theRayPtr = move(rayList.front());
             RayState &theRay = *theRayPtr;
             rayList.pop();
+            const int prevNodeID = prevNodes.front(); prevNodes.pop();
+            ray_cntr++;
 
             const TreeletId rayTreeletId = theRay.CurrentTreelet();
             const uint64_t pathID = theRay.PathID();
+            const int thisNodeID = trace_per_path[pathID].size();
 
-            //rays_per_treelet[rayTreeletId]++;
-            //treelets_per_path[pathID].push_back(rayTreeletId);
-
+#if 0
+            rays_per_treelet[rayTreeletId]++;
+            treelets_per_path[pathID].push_back(rayTreeletId);
+#endif
+#if 1
             auto start = chrono::high_resolution_clock::now();
+#endif
             if (!theRay.toVisitEmpty()) {
                 auto newRayPtr = graphics::TraceRay(move(theRayPtr),
                                                     *treelets[rayTreeletId]);
@@ -160,9 +178,11 @@ int main(int argc, char const *argv[]) {
                         samples.emplace_back(*newRayPtr);
                     } else {
                         rayList.push(move(newRayPtr));
+                        prevNodes.push(thisNodeID);
                     }
                 } else if (!emptyVisit || hit) {
                     rayList.push(move(newRayPtr));
+                    prevNodes.push(thisNodeID);
                 } else if (emptyVisit) {
                     newRay.Ld = 0.f;
                     samples.emplace_back(*newRayPtr);
@@ -175,17 +195,21 @@ int main(int argc, char const *argv[]) {
 
                 if (bounceRay != nullptr) {
                     rayList.push(move(bounceRay));
+                    prevNodes.push(thisNodeID);
                 }
 
                 if (shadowRay != nullptr) {
                     rayList.push(move(shadowRay));
+                    prevNodes.push(thisNodeID);
                 }
             }
-            auto end = chrono::high_resolution_clock::now();
-
-            auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
-            time_per_path[pathID] += elapsed_ns;
-            times_per_treelet[rayTreeletId].push_back(elapsed_ns);
+#if 1
+            // TODO: stop timing earlier, so that we don't include rayList.push()
+            auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(chrono::high_resolution_clock::now() - start).count();
+            //time_per_path[pathID] += elapsed_ns;
+            //times_per_treelet[rayTreeletId].push_back(elapsed_ns);
+            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, elapsed_ns });
+#endif
         }
 
         graphics::AccumulateImage(camera, samples);
@@ -195,18 +219,21 @@ int main(int argc, char const *argv[]) {
         return EXIT_FAILURE;
     }
 
-    //ofstream rays_per_treelet_file("rays_per_treelet.txt");
-    //for (auto const& x : rays_per_treelet) rays_per_treelet_file << x.first << " " << x.second << endl;
-    //rays_per_treelet_file.close();
+#if 0
+    ofstream rays_per_treelet_file("rays_per_treelet.txt");
+    for (auto const& x : rays_per_treelet) rays_per_treelet_file << x.first << " " << x.second << endl;
+    rays_per_treelet_file.close();
 
-    //ofstream treelets_per_path_file("treelets_per_path.txt");
-    //for (auto const& x : treelets_per_path) {
-    //  treelets_per_path_file << x.first;
-    //  for (auto const& tid : x.second) treelets_per_path_file << " " << tid;
-    //  treelets_per_path_file << endl;
-    //}
-    //treelets_per_path_file.close();
+    ofstream treelets_per_path_file("treelets_per_path.txt");
+    for (auto const& x : treelets_per_path) {
+      treelets_per_path_file << x.first;
+      for (auto const& tid : x.second) treelets_per_path_file << " " << tid;
+      treelets_per_path_file << endl;
+    }
+    treelets_per_path_file.close();
+#endif
 
+#if 0
     ofstream time_per_path_file("time_per_path.txt");
     for (auto const& x : time_per_path) time_per_path_file << x.first << " " <<  x.second << endl;
     time_per_path_file.close();
@@ -218,7 +245,19 @@ int main(int argc, char const *argv[]) {
       times_per_treelet_file << endl;
     }
     times_per_treelet_file.close();
+#endif
 
+#if 1
+    ofstream trace_per_path_file("trace_per_path.txt");
+    for (auto const& x : trace_per_path) {
+      trace_per_path_file << x.first;
+      for (auto const& e: x.second) trace_per_path_file << " " << e.nodeID << "," << e.prevNodeID << "," << e.treeletID << "," << e.elapsed_ns;
+      trace_per_path_file << endl;
+    }
+    trace_per_path_file.close();
+#endif
+
+    cerr << ray_cntr << " rays total." << endl;
 
     return EXIT_SUCCESS;
 }
