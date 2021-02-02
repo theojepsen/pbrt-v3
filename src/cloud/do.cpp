@@ -18,7 +18,7 @@ using namespace std;
 using namespace pbrt;
 
 void usage(const char *argv0) {
-    cerr << argv0 << " SCENE-DATA CAMERA-RAYS" << endl;
+    cerr << argv0 << " SCENE-DATA CAMERA-RAYS OUT-PREFIX [START-PATHID END-PATHID]" << endl;
 }
 
 vector<shared_ptr<Light>> loadLights() {
@@ -57,6 +57,7 @@ Scene loadFakeScene() {
 
 enum class Operation { Trace, Shade };
 
+#define TIMING_SAMPLES_CNT (1 * 1000)
 struct trace_edge {
   int nodeID;
   int prevNodeID;
@@ -66,19 +67,15 @@ struct trace_edge {
 
 int main(int argc, char const *argv[]) {
 
-    map<TreeletId, unsigned> rays_per_treelet;
-    map<TreeletId, vector<uint64_t> > times_per_treelet;
-    map<uint64_t, vector<TreeletId> > treelets_per_path;
-    map<uint64_t, uint64_t> time_per_path;
     map<uint64_t, vector<struct trace_edge> > trace_per_path;
-    unsigned ray_cntr = 0;
+    unsigned rayCntr = 0;
 
     try {
         if (argc <= 0) {
             abort();
         }
 
-        if (argc != 3) {
+        if (argc < 4) {
             usage(argv[0]);
             return EXIT_FAILURE;
         }
@@ -88,6 +85,13 @@ int main(int argc, char const *argv[]) {
 
         const string scenePath{argv[1]};
         const string raysPath{argv[2]};
+        const string outPrefix{argv[3]};
+
+        int startPathId = -1, endPathId = -1;
+        if (argc == 6) {
+          startPathId = atoi(argv[4]);
+          endPathId = atoi(argv[5]);
+        }
 
         global::manager.init(scenePath);
 
@@ -104,8 +108,9 @@ int main(int argc, char const *argv[]) {
                 if (reader.read(&rayStr)) {
                     auto rayStatePtr = RayState::Create();
                     rayStatePtr->Deserialize(rayStr.data(), rayStr.length());
-                    treelets_per_path[rayStatePtr->PathID()] = vector<TreeletId>();
-                    time_per_path[rayStatePtr->PathID()] = 0;
+                    const uint64_t pathID = rayStatePtr->PathID();
+                    if (startPathId != -1 && !(startPathId <= pathID && pathID <= endPathId))
+                      continue;
                     trace_per_path[rayStatePtr->PathID()] = vector<struct trace_edge>();
                     rayList.push(move(rayStatePtr));
                     prevNodes.push(-1);
@@ -133,8 +138,6 @@ int main(int argc, char const *argv[]) {
         /* let's load all the treelets */
         for (size_t i = 0; i < treelets.size(); i++) {
             treelets[i] = make_unique<CloudBVH>(i);
-            rays_per_treelet[i] = 0;
-            times_per_treelet[i] = vector<uint64_t>();
         }
 
         cerr << treelets.size() << " total treelets" << endl;
@@ -151,20 +154,35 @@ int main(int argc, char const *argv[]) {
             RayState &theRay = *theRayPtr;
             rayList.pop();
             const int prevNodeID = prevNodes.front(); prevNodes.pop();
-            ray_cntr++;
+            rayCntr++;
 
             const TreeletId rayTreeletId = theRay.CurrentTreelet();
             const uint64_t pathID = theRay.PathID();
             const int thisNodeID = trace_per_path[pathID].size();
 
-#if 0
-            rays_per_treelet[rayTreeletId]++;
-            treelets_per_path[pathID].push_back(rayTreeletId);
-#endif
-#if 1
-            auto start = chrono::high_resolution_clock::now();
+#if TIMING_SAMPLES_CNT
+            char rayBuffer[sizeof(RayState)];
+            const auto serializedLen = theRay.Serialize(rayBuffer);
+            vector<RayStatePtr> rayCopies(TIMING_SAMPLES_CNT);
+            for (int i = 0; i < TIMING_SAMPLES_CNT; i++) {
+                auto theRayPtr2 = RayState::Create();
+                theRayPtr2->Deserialize(rayBuffer+4, serializedLen-4);
+                rayCopies[i] = move(theRayPtr2);
+            }
+            long int min_elapsed = -1;
 #endif
             if (!theRay.toVisitEmpty()) {
+#if TIMING_SAMPLES_CNT
+                for (int i = 0; i < TIMING_SAMPLES_CNT; i++) {
+                    auto theRayPtr2 = move(rayCopies[i]);
+                    auto start = chrono::high_resolution_clock::now();
+                    graphics::TraceRay(move(theRayPtr2),
+                                                    *treelets[rayTreeletId]);
+                    auto stop = chrono::high_resolution_clock::now();
+                    auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
+                    if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
+                }
+#endif // TIMING_SAMPLES_CNT
                 auto newRayPtr = graphics::TraceRay(move(theRayPtr),
                                                     *treelets[rayTreeletId]);
                 auto &newRay = *newRayPtr;
@@ -188,6 +206,17 @@ int main(int argc, char const *argv[]) {
                     samples.emplace_back(*newRayPtr);
                 }
             } else if (theRay.HasHit()) {
+#if TIMING_SAMPLES_CNT
+                for (int i = 0; i < TIMING_SAMPLES_CNT; i++) {
+                    auto theRayPtr2 = move(rayCopies[i]);
+                    auto start = chrono::high_resolution_clock::now();
+                    graphics::ShadeRay(move(theRayPtr2), *treelets[rayTreeletId],
+                                       lights, sampleExtent, sampler, maxDepth, arena);
+                    auto stop = chrono::high_resolution_clock::now();
+                    auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
+                    if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
+                }
+#endif // TIMING_SAMPLES_CNT
                 RayStatePtr bounceRay, shadowRay;
                 tie(bounceRay, shadowRay) =
                     graphics::ShadeRay(move(theRayPtr), *treelets[rayTreeletId],
@@ -203,14 +232,21 @@ int main(int argc, char const *argv[]) {
                     prevNodes.push(thisNodeID);
                 }
             }
-#if 1
-            // TODO: stop timing earlier, so that we don't include rayList.push()
-            auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(chrono::high_resolution_clock::now() - start).count();
-            //time_per_path[pathID] += elapsed_ns;
-            //times_per_treelet[rayTreeletId].push_back(elapsed_ns);
-            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, elapsed_ns });
+#if TIMING_SAMPLES_CNT
+            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, min_elapsed });
 #endif
         }
+
+        ofstream trace_per_path_file(outPrefix + "trace_per_path.txt");
+        for (auto const& x : trace_per_path) {
+          trace_per_path_file << x.first;
+          for (auto const& e: x.second) trace_per_path_file << " "
+            << e.nodeID << " " << e.prevNodeID << " " << e.treeletID << " " << e.elapsed_ns;
+          trace_per_path_file << endl;
+        }
+        trace_per_path_file.close();
+
+        cerr << rayCntr << " rays total." << endl;
 
         graphics::AccumulateImage(camera, samples);
         camera->film->WriteImage();
@@ -218,46 +254,6 @@ int main(int argc, char const *argv[]) {
         print_exception(argv[0], e);
         return EXIT_FAILURE;
     }
-
-#if 0
-    ofstream rays_per_treelet_file("rays_per_treelet.txt");
-    for (auto const& x : rays_per_treelet) rays_per_treelet_file << x.first << " " << x.second << endl;
-    rays_per_treelet_file.close();
-
-    ofstream treelets_per_path_file("treelets_per_path.txt");
-    for (auto const& x : treelets_per_path) {
-      treelets_per_path_file << x.first;
-      for (auto const& tid : x.second) treelets_per_path_file << " " << tid;
-      treelets_per_path_file << endl;
-    }
-    treelets_per_path_file.close();
-#endif
-
-#if 0
-    ofstream time_per_path_file("time_per_path.txt");
-    for (auto const& x : time_per_path) time_per_path_file << x.first << " " <<  x.second << endl;
-    time_per_path_file.close();
-
-    ofstream times_per_treelet_file("times_per_treelet.txt");
-    for (auto const& x : times_per_treelet) {
-      times_per_treelet_file << x.first;
-      for (auto const& t: x.second) times_per_treelet_file << " " << t;
-      times_per_treelet_file << endl;
-    }
-    times_per_treelet_file.close();
-#endif
-
-#if 1
-    ofstream trace_per_path_file("trace_per_path.txt");
-    for (auto const& x : trace_per_path) {
-      trace_per_path_file << x.first;
-      for (auto const& e: x.second) trace_per_path_file << " " << e.nodeID << "," << e.prevNodeID << "," << e.treeletID << "," << e.elapsed_ns;
-      trace_per_path_file << endl;
-    }
-    trace_per_path_file.close();
-#endif
-
-    cerr << ray_cntr << " rays total." << endl;
 
     return EXIT_SUCCESS;
 }
