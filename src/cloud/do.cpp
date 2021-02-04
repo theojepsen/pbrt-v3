@@ -57,6 +57,7 @@ Scene loadFakeScene() {
 
 enum class Operation { Trace, Shade };
 
+#define DUMP_ALL_TIMING_SAMPLES 0
 #define TIMING_SAMPLES_CNT (1 * 1000)
 struct trace_edge {
   int nodeID;
@@ -68,6 +69,9 @@ struct trace_edge {
 int main(int argc, char const *argv[]) {
 
     map<uint64_t, vector<struct trace_edge> > trace_per_path;
+#if DUMP_ALL_TIMING_SAMPLES
+    vector<vector<uint32_t> > allTimingSamples;
+#endif
     unsigned rayCntr = 0;
 
     try {
@@ -170,6 +174,7 @@ int main(int argc, char const *argv[]) {
                 rayCopies[i] = move(theRayPtr2);
             }
             long int min_elapsed = -1;
+            vector<uint32_t> timingSamples(TIMING_SAMPLES_CNT);
 #endif
             if (!theRay.toVisitEmpty()) {
 #if TIMING_SAMPLES_CNT
@@ -181,6 +186,9 @@ int main(int argc, char const *argv[]) {
                     auto stop = chrono::high_resolution_clock::now();
                     auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
                     if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
+#if DUMP_ALL_TIMING_SAMPLES
+                    timingSamples[i] = elapsed_ns;
+#endif
                 }
 #endif // TIMING_SAMPLES_CNT
                 auto newRayPtr = graphics::TraceRay(move(theRayPtr),
@@ -215,6 +223,9 @@ int main(int argc, char const *argv[]) {
                     auto stop = chrono::high_resolution_clock::now();
                     auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
                     if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
+#if DUMP_ALL_TIMING_SAMPLES
+                    timingSamples[i] = elapsed_ns;
+#endif
                 }
 #endif // TIMING_SAMPLES_CNT
                 RayStatePtr bounceRay, shadowRay;
@@ -234,6 +245,9 @@ int main(int argc, char const *argv[]) {
             }
 #if TIMING_SAMPLES_CNT
             trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, min_elapsed });
+#if DUMP_ALL_TIMING_SAMPLES
+            allTimingSamples.push_back(timingSamples);
+#endif
 #endif
         }
 
@@ -245,6 +259,15 @@ int main(int argc, char const *argv[]) {
           trace_per_path_file << endl;
         }
         trace_per_path_file.close();
+
+#if DUMP_ALL_TIMING_SAMPLES
+        ofstream timingSamples_file(outPrefix + "timingSamples.txt");
+        for (auto const& x : allTimingSamples) {
+          for (auto const& ns: x) timingSamples_file << ns << " ";
+          timingSamples_file << endl;
+        }
+        timingSamples_file.close();
+#endif // DUMP_ALL_TIMING_SAMPLES
 
         cerr << rayCntr << " rays total." << endl;
 
