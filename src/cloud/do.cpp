@@ -14,6 +14,10 @@
 #include "messages/utils.h"
 #include "util/exception.h"
 
+#include <sys/ioctl.h>
+#include <linux/perf_event.h>
+#include <asm/unistd.h>
+
 using namespace std;
 using namespace pbrt;
 
@@ -57,6 +61,7 @@ Scene loadFakeScene() {
 
 enum class Operation { Trace, Shade };
 
+#define DO_PERF_STATS 0
 #define DUMP_ALL_TIMING_SAMPLES 0
 #define TIMING_SAMPLES_CNT (1 * 1000)
 struct trace_edge {
@@ -64,13 +69,159 @@ struct trace_edge {
   int prevNodeID;
   TreeletId treeletID;
   long int elapsed_ns;
+  unsigned bvhNodesVisited;
 };
+
+enum TaskType {
+  TaskTypeTrace = 1,
+  TaskTypeShade = 2
+};
+
+#if DO_PERF_STATS
+struct perf_sample {
+  unsigned cycles;
+  unsigned instructions;
+  unsigned l1d_access;
+  unsigned l1d_miss;
+};
+struct task_desc {
+  unsigned pathID;
+  int nodeID;
+  TaskType taskType;
+};
+
+struct read_format {
+    uint64_t nr;
+    struct {
+        uint64_t value;
+        uint64_t id;
+    } values[];
+};
+
+long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
+    int cpu, int group_fd, unsigned long flags) {
+  int ret = syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
+  return ret;
+}
+int perf_group_fd;
+uint64_t perf_id_ref, perf_id_miss, perf_id_cycles, perf_id_inst;
+void perf_setup() {
+  int fd2, fd3, fd4;
+  struct perf_event_attr pe;
+
+  bzero(&pe, sizeof(struct perf_event_attr));
+  pe.size = sizeof(struct perf_event_attr);
+  //pe.type = PERF_TYPE_HARDWARE;
+  //pe.config = PERF_COUNT_HW_CACHE_REFERENCES;
+  pe.type = PERF_TYPE_HW_CACHE;
+  pe.config = (PERF_COUNT_HW_CACHE_L1D) |
+    (PERF_COUNT_HW_CACHE_OP_READ << 8) |
+    (PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16);
+  pe.disabled = 1;
+  pe.exclude_kernel = 1;
+  pe.exclude_hv = 1;
+  pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+
+  perf_group_fd = perf_event_open(&pe, 0, -1, -1, 0);
+
+  if (perf_group_fd == -1) {
+    fprintf(stderr, "Error opening leader %llx\n", pe.config);
+    exit(EXIT_FAILURE);
+  }
+  ioctl(perf_group_fd, PERF_EVENT_IOC_ID, &perf_id_ref);
+
+  bzero(&pe, sizeof(struct perf_event_attr));
+  pe.size = sizeof(struct perf_event_attr);
+  //pe.type = PERF_TYPE_HARDWARE;
+  //pe.config = PERF_COUNT_HW_CACHE_MISSES;
+  pe.type = PERF_TYPE_HW_CACHE;
+  pe.config = (PERF_COUNT_HW_CACHE_L1D) |
+    (PERF_COUNT_HW_CACHE_OP_READ << 8) |
+    (PERF_COUNT_HW_CACHE_RESULT_MISS << 16);
+  pe.disabled = 1;
+  pe.exclude_kernel = 1;
+  pe.exclude_hv = 1;
+  pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+
+  fd2 = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd2 == -1) {
+    fprintf(stderr, "Error opening second %llx\n", pe.config);
+    exit(EXIT_FAILURE);
+  }
+  ioctl(fd2, PERF_EVENT_IOC_ID, &perf_id_miss);
+
+  bzero(&pe, sizeof(struct perf_event_attr));
+  pe.type = PERF_TYPE_HARDWARE;
+  pe.size = sizeof(struct perf_event_attr);
+  pe.config = PERF_COUNT_HW_CPU_CYCLES;
+  pe.disabled = 1;
+  pe.exclude_kernel = 1;
+  pe.exclude_hv = 1;
+  pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+
+  fd3 = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd3 == -1) {
+    fprintf(stderr, "Error opening second %llx\n", pe.config);
+    exit(EXIT_FAILURE);
+  }
+  ioctl(fd3, PERF_EVENT_IOC_ID, &perf_id_cycles);
+
+  bzero(&pe, sizeof(struct perf_event_attr));
+  pe.type = PERF_TYPE_HARDWARE;
+  pe.size = sizeof(struct perf_event_attr);
+  pe.config = PERF_COUNT_HW_INSTRUCTIONS;
+  pe.disabled = 1;
+  pe.exclude_kernel = 1;
+  pe.exclude_hv = 1;
+  pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+
+  fd4 = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd4 == -1) {
+    fprintf(stderr, "Error opening second %llx\n", pe.config);
+    exit(EXIT_FAILURE);
+  }
+  ioctl(fd4, PERF_EVENT_IOC_ID, &perf_id_inst);
+}
+
+inline void perf_record_start() {
+  ioctl(perf_group_fd, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
+  ioctl(perf_group_fd, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
+}
+
+inline void perf_record_end(struct perf_sample *out) {
+  ioctl(perf_group_fd, PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP);
+
+  char buf[4096];
+  struct read_format* rf = (struct read_format*) buf;
+  bzero(out, sizeof(*out));
+
+  ssize_t r = read(perf_group_fd, buf, sizeof(buf));
+  assert(r > 0);
+  assert(rf->nr == 4);
+  for (unsigned i = 0; i < rf->nr; i++) {
+    if (rf->values[i].id == perf_id_ref)
+      out->l1d_access = rf->values[i].value;
+    else if (rf->values[i].id == perf_id_miss)
+      out->l1d_miss = rf->values[i].value;
+    else if (rf->values[i].id == perf_id_inst)
+      out->instructions = rf->values[i].value;
+    else if (rf->values[i].id == perf_id_cycles)
+      out->cycles = rf->values[i].value;
+    else
+      assert(0 && "Unexpected perf id");
+  }
+}
+#endif // DO_PERF_STATS
 
 int main(int argc, char const *argv[]) {
 
     map<uint64_t, vector<struct trace_edge> > trace_per_path;
 #if DUMP_ALL_TIMING_SAMPLES
     vector<vector<uint32_t> > allTimingSamples;
+#endif
+#if DO_PERF_STATS
+    perf_setup();
+    vector<pair<struct task_desc, vector<struct perf_sample> > > allPerfSamples;
 #endif
     unsigned rayCntr = 0;
 
@@ -139,12 +290,17 @@ int main(int argc, char const *argv[]) {
         vector<unique_ptr<CloudBVH>> treelets;
         treelets.resize(global::manager.treeletCount());
 
+        ofstream node_cnt_file(outPrefix + "node_cnt_for_treelet.txt");
+
         /* let's load all the treelets */
         for (size_t i = 0; i < treelets.size(); i++) {
             treelets[i] = make_unique<CloudBVH>(i);
+            treelets[i]->LoadTreelet(i);
+            node_cnt_file << i << " " << treelets[i]->nodeCount() << endl;
         }
+        node_cnt_file.close();
 
-        cerr << treelets.size() << " total treelets" << endl;
+        cerr << treelets.size() << " total treelets." << endl;
 
         for (auto &light : lights) {
             light->Preprocess(fakeScene);
@@ -161,7 +317,7 @@ int main(int argc, char const *argv[]) {
             rayCntr++;
 
             const TreeletId rayTreeletId = theRay.CurrentTreelet();
-            const uint64_t pathID = theRay.PathID();
+            const unsigned pathID = theRay.PathID();
             const int thisNodeID = trace_per_path[pathID].size();
 
 #if TIMING_SAMPLES_CNT
@@ -175,17 +331,31 @@ int main(int argc, char const *argv[]) {
             }
             long int min_elapsed = -1;
             vector<uint32_t> timingSamples(TIMING_SAMPLES_CNT);
+            TaskType taskType;
+            unsigned bvhNodesVisited = 0;
+#if DO_PERF_STATS
+            vector<struct perf_sample> perfSamples(TIMING_SAMPLES_CNT);
+#endif
 #endif
             if (!theRay.toVisitEmpty()) {
 #if TIMING_SAMPLES_CNT
+                taskType = TaskTypeTrace;
                 for (int i = 0; i < TIMING_SAMPLES_CNT; i++) {
                     auto theRayPtr2 = move(rayCopies[i]);
+                    const auto nodesVisitedBefore = getNodesVisitedCounter();
                     auto start = chrono::high_resolution_clock::now();
+#if DO_PERF_STATS
+                    perf_record_start();
+#endif
                     graphics::TraceRay(move(theRayPtr2),
                                                     *treelets[rayTreeletId]);
+#if DO_PERF_STATS
+                    perf_record_end(&perfSamples[i]);
+#endif
                     auto stop = chrono::high_resolution_clock::now();
                     auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
                     if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
+                    bvhNodesVisited = getNodesVisitedCounter() - nodesVisitedBefore;
 #if DUMP_ALL_TIMING_SAMPLES
                     timingSamples[i] = elapsed_ns;
 #endif
@@ -215,14 +385,23 @@ int main(int argc, char const *argv[]) {
                 }
             } else if (theRay.HasHit()) {
 #if TIMING_SAMPLES_CNT
-                for (int i = 0; i < TIMING_SAMPLES_CNT; i++) {
+                taskType = TaskTypeShade;
+                for (int i = 0; i < 20; i++) {
                     auto theRayPtr2 = move(rayCopies[i]);
+                    const auto nodesVisitedBefore = getNodesVisitedCounter();
                     auto start = chrono::high_resolution_clock::now();
+#if DO_PERF_STATS
+                    perf_record_start();
+#endif
                     graphics::ShadeRay(move(theRayPtr2), *treelets[rayTreeletId],
                                        lights, sampleExtent, sampler, maxDepth, arena);
+#if DO_PERF_STATS
+                    perf_record_end(&perfSamples[i]);
+#endif
                     auto stop = chrono::high_resolution_clock::now();
                     auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
                     if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
+                    bvhNodesVisited = getNodesVisitedCounter() - nodesVisitedBefore;
 #if DUMP_ALL_TIMING_SAMPLES
                     timingSamples[i] = elapsed_ns;
 #endif
@@ -244,9 +423,12 @@ int main(int argc, char const *argv[]) {
                 }
             }
 #if TIMING_SAMPLES_CNT
-            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, min_elapsed });
+            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, min_elapsed, bvhNodesVisited });
 #if DUMP_ALL_TIMING_SAMPLES
             allTimingSamples.push_back(timingSamples);
+#endif
+#if DO_PERF_STATS
+            allPerfSamples.push_back({ { pathID, thisNodeID, taskType }, perfSamples });
 #endif
 #endif
         }
@@ -255,10 +437,22 @@ int main(int argc, char const *argv[]) {
         for (auto const& x : trace_per_path) {
           trace_per_path_file << x.first;
           for (auto const& e: x.second) trace_per_path_file << " "
-            << e.nodeID << " " << e.prevNodeID << " " << e.treeletID << " " << e.elapsed_ns;
+            << e.nodeID << " " << e.prevNodeID << " " << e.treeletID << " " << e.elapsed_ns << " " << e.bvhNodesVisited;
           trace_per_path_file << endl;
         }
         trace_per_path_file.close();
+
+#if DO_PERF_STATS
+        ofstream perfSamples_file(outPrefix + "perfSamples.txt");
+        for (auto const& x : allPerfSamples) {
+          perfSamples_file << x.first.pathID << " " << x.first.nodeID << " " << x.first.taskType;
+          for (auto const& ps: x.second) {
+            perfSamples_file << " " << ps.cycles << " " << ps.instructions << " " << ps.l1d_access << " " << ps.l1d_miss;
+          }
+          perfSamples_file << endl;
+        }
+        perfSamples_file.close();
+#endif // DO_PERF_STATS
 
 #if DUMP_ALL_TIMING_SAMPLES
         ofstream timingSamples_file(outPrefix + "timingSamples.txt");

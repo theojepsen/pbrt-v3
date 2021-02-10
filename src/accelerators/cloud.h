@@ -20,6 +20,8 @@ namespace pbrt {
 struct TreeletNode;
 class TriangleMesh;
 
+int getNodesVisitedCounter();
+
 class CloudBVH : public Aggregate {
   public:
     struct TreeletInfo {
@@ -74,6 +76,8 @@ class CloudBVH : public Aggregate {
 
         bool is_leaf() const { return leaf_tag == ~0; }
     };
+
+    int nodeCount() { return treelets_[bvh_root_]->nodes.size(); }
 
   private:
     enum Child { LEFT = 0, RIGHT = 1 };

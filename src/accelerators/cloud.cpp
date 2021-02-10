@@ -23,6 +23,8 @@ STAT_COUNTER("BVH/Total nodes", nNodes);
 STAT_COUNTER("BVH/Visited nodes", nNodesVisited);
 STAT_COUNTER("BVH/Visited primitives", nPrimitivesVisited);
 
+int getNodesVisitedCounter() { return nNodesVisited; }
+
 CloudBVH::CloudBVH(const uint32_t bvh_root, const bool preload_all)
     : bvh_root_(bvh_root) {
     ProfilePhase _(Prof::AccelConstruction);
