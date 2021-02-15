@@ -64,17 +64,18 @@ enum class Operation { Trace, Shade };
 #define DO_PERF_STATS 0
 #define DUMP_ALL_TIMING_SAMPLES 0
 #define TIMING_SAMPLES_CNT (1 * 1000)
-struct trace_edge {
-  int nodeID;
-  int prevNodeID;
-  TreeletId treeletID;
-  long int elapsed_ns;
-  unsigned bvhNodesVisited;
-};
-
 enum TaskType {
   TaskTypeTrace = 1,
   TaskTypeShade = 2
+};
+
+struct trace_edge {
+  int nodeID;
+  int prevNodeID;
+  TaskType taskType;
+  TreeletId treeletID;
+  long int elapsed_ns;
+  unsigned bvhNodesVisited;
 };
 
 #if DO_PERF_STATS
@@ -83,6 +84,8 @@ struct perf_sample {
   unsigned instructions;
   unsigned l1d_access;
   unsigned l1d_miss;
+  unsigned ctx_switches;
+  unsigned migrations;
 };
 struct task_desc {
   unsigned pathID;
@@ -105,8 +108,9 @@ long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
 }
 int perf_group_fd;
 uint64_t perf_id_ref, perf_id_miss, perf_id_cycles, perf_id_inst;
+uint64_t perf_id_ctx_switches, perf_id_migrations;
 void perf_setup() {
-  int fd2, fd3, fd4;
+  int fd;
   struct perf_event_attr pe;
 
   bzero(&pe, sizeof(struct perf_event_attr));
@@ -121,9 +125,7 @@ void perf_setup() {
   pe.exclude_kernel = 1;
   pe.exclude_hv = 1;
   pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
-
   perf_group_fd = perf_event_open(&pe, 0, -1, -1, 0);
-
   if (perf_group_fd == -1) {
     fprintf(stderr, "Error opening leader %llx\n", pe.config);
     exit(EXIT_FAILURE);
@@ -142,13 +144,12 @@ void perf_setup() {
   pe.exclude_kernel = 1;
   pe.exclude_hv = 1;
   pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
-
-  fd2 = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
-  if (fd2 == -1) {
+  fd = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd == -1) {
     fprintf(stderr, "Error opening second %llx\n", pe.config);
     exit(EXIT_FAILURE);
   }
-  ioctl(fd2, PERF_EVENT_IOC_ID, &perf_id_miss);
+  ioctl(fd, PERF_EVENT_IOC_ID, &perf_id_miss);
 
   bzero(&pe, sizeof(struct perf_event_attr));
   pe.type = PERF_TYPE_HARDWARE;
@@ -158,13 +159,12 @@ void perf_setup() {
   pe.exclude_kernel = 1;
   pe.exclude_hv = 1;
   pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
-
-  fd3 = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
-  if (fd3 == -1) {
-    fprintf(stderr, "Error opening second %llx\n", pe.config);
+  fd = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd == -1) {
+    fprintf(stderr, "Error opening third %llx\n", pe.config);
     exit(EXIT_FAILURE);
   }
-  ioctl(fd3, PERF_EVENT_IOC_ID, &perf_id_cycles);
+  ioctl(fd, PERF_EVENT_IOC_ID, &perf_id_cycles);
 
   bzero(&pe, sizeof(struct perf_event_attr));
   pe.type = PERF_TYPE_HARDWARE;
@@ -174,13 +174,43 @@ void perf_setup() {
   pe.exclude_kernel = 1;
   pe.exclude_hv = 1;
   pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
-
-  fd4 = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
-  if (fd4 == -1) {
-    fprintf(stderr, "Error opening second %llx\n", pe.config);
+  fd = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd == -1) {
+    fprintf(stderr, "Error perf_event_open %llx\n", pe.config);
     exit(EXIT_FAILURE);
   }
-  ioctl(fd4, PERF_EVENT_IOC_ID, &perf_id_inst);
+  ioctl(fd, PERF_EVENT_IOC_ID, &perf_id_inst);
+
+  bzero(&pe, sizeof(struct perf_event_attr));
+  pe.type = PERF_TYPE_SOFTWARE;
+  pe.size = sizeof(struct perf_event_attr);
+  pe.config = PERF_COUNT_SW_CONTEXT_SWITCHES;
+  pe.disabled = 1;
+  pe.exclude_kernel = 0;
+  pe.exclude_hv = 0;
+  pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+  fd = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd == -1) {
+    fprintf(stderr, "Error perf_event_open %llx\n", pe.config);
+    exit(EXIT_FAILURE);
+  }
+  ioctl(fd, PERF_EVENT_IOC_ID, &perf_id_ctx_switches);
+
+  bzero(&pe, sizeof(struct perf_event_attr));
+  pe.type = PERF_TYPE_SOFTWARE;
+  pe.size = sizeof(struct perf_event_attr);
+  pe.config = PERF_COUNT_SW_CPU_MIGRATIONS;
+  pe.disabled = 1;
+  pe.exclude_kernel = 0;
+  pe.exclude_hv = 0;
+  pe.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;
+  fd = perf_event_open(&pe, 0, -1, perf_group_fd, 0);
+  if (fd == -1) {
+    fprintf(stderr, "Error perf_event_open %llx\n", pe.config);
+    exit(EXIT_FAILURE);
+  }
+  ioctl(fd, PERF_EVENT_IOC_ID, &perf_id_migrations);
+
 }
 
 inline void perf_record_start() {
@@ -197,7 +227,8 @@ inline void perf_record_end(struct perf_sample *out) {
 
   ssize_t r = read(perf_group_fd, buf, sizeof(buf));
   assert(r > 0);
-  assert(rf->nr == 4);
+  assert(r <= sizeof(buf));
+  assert(rf->nr == 6);
   for (unsigned i = 0; i < rf->nr; i++) {
     if (rf->values[i].id == perf_id_ref)
       out->l1d_access = rf->values[i].value;
@@ -207,6 +238,10 @@ inline void perf_record_end(struct perf_sample *out) {
       out->instructions = rf->values[i].value;
     else if (rf->values[i].id == perf_id_cycles)
       out->cycles = rf->values[i].value;
+    else if (rf->values[i].id == perf_id_ctx_switches)
+      out->ctx_switches = rf->values[i].value;
+    else if (rf->values[i].id == perf_id_migrations)
+      out->migrations = rf->values[i].value;
     else
       assert(0 && "Unexpected perf id");
   }
@@ -423,7 +458,7 @@ int main(int argc, char const *argv[]) {
                 }
             }
 #if TIMING_SAMPLES_CNT
-            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, rayTreeletId, min_elapsed, bvhNodesVisited });
+            trace_per_path[pathID].push_back({ thisNodeID, prevNodeID, taskType, rayTreeletId, min_elapsed, bvhNodesVisited });
 #if DUMP_ALL_TIMING_SAMPLES
             allTimingSamples.push_back(timingSamples);
 #endif
@@ -437,7 +472,7 @@ int main(int argc, char const *argv[]) {
         for (auto const& x : trace_per_path) {
           trace_per_path_file << x.first;
           for (auto const& e: x.second) trace_per_path_file << " "
-            << e.nodeID << " " << e.prevNodeID << " " << e.treeletID << " " << e.elapsed_ns << " " << e.bvhNodesVisited;
+            << e.nodeID << " " << e.prevNodeID << " " << e.taskType << " " << e.treeletID << " " << e.elapsed_ns << " " << e.bvhNodesVisited;
           trace_per_path_file << endl;
         }
         trace_per_path_file.close();
@@ -447,7 +482,9 @@ int main(int argc, char const *argv[]) {
         for (auto const& x : allPerfSamples) {
           perfSamples_file << x.first.pathID << " " << x.first.nodeID << " " << x.first.taskType;
           for (auto const& ps: x.second) {
-            perfSamples_file << " " << ps.cycles << " " << ps.instructions << " " << ps.l1d_access << " " << ps.l1d_miss;
+            perfSamples_file << " " << ps.cycles << " " << ps.instructions << " "
+                << ps.ctx_switches << " " << ps.migrations << " "
+                << ps.l1d_access << " " << ps.l1d_miss;
           }
           perfSamples_file << endl;
         }
