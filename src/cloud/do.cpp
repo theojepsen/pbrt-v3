@@ -330,7 +330,7 @@ int main(int argc, char const *argv[]) {
         /* let's load all the treelets */
         for (size_t i = 0; i < treelets.size(); i++) {
             treelets[i] = make_unique<CloudBVH>(i);
-            treelets[i]->LoadTreelet(i);
+            treelets[i]->LoadTreelet(i, nullptr);
             node_cnt_file << i << " " << treelets[i]->nodeCount() << endl;
         }
         node_cnt_file.close();
