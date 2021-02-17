@@ -76,7 +76,7 @@ class CloudBVH : public Aggregate {
         bool is_leaf() const { return leaf_tag == ~0; }
     };
 
-    int nodeCount() { return treelets_[bvh_root_]->nodes.size(); }
+    int nodeCount() { return treelets_[bvh_root_].nodes.size(); }
 
   private:
     enum Child { LEFT = 0, RIGHT = 1 };
