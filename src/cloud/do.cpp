@@ -17,6 +17,7 @@
 #include <sys/ioctl.h>
 #include <linux/perf_event.h>
 #include <asm/unistd.h>
+#include <valgrind/callgrind.h>
 
 using namespace std;
 using namespace pbrt;
@@ -63,7 +64,9 @@ enum class Operation { Trace, Shade };
 
 #define DO_PERF_STATS 0
 #define DUMP_ALL_TIMING_SAMPLES 0
-#define TIMING_SAMPLES_CNT (1 * 1000)
+//#define TIMING_SAMPLES_CNT (1 * 1000)
+#define WARMUP_ITERS 0
+#define TIMING_SAMPLES_CNT 1
 enum TaskType {
   TaskTypeTrace = 1,
   TaskTypeShade = 2
@@ -325,17 +328,46 @@ int main(int argc, char const *argv[]) {
         vector<unique_ptr<CloudBVH>> treelets;
         treelets.resize(global::manager.treeletCount());
 
+#define DUMP_NODE_COUNT 0
+#if DUMP_NODE_COUNT
         ofstream node_cnt_file(outPrefix + "node_cnt_for_treelet.txt");
+#endif
 
         /* let's load all the treelets */
         for (size_t i = 0; i < treelets.size(); i++) {
             treelets[i] = make_unique<CloudBVH>(i);
             treelets[i]->LoadTreelet(i, nullptr);
+#if DUMP_NODE_COUNT
             node_cnt_file << i << " " << treelets[i]->nodeCount() << endl;
+#endif
         }
+#if DUMP_NODE_COUNT
         node_cnt_file.close();
+#endif
 
         cerr << treelets.size() << " total treelets." << endl;
+
+#if 0
+        int sums[3];
+        //int tid = 20674;
+        int tid = 8008;
+        //sums[2] = treelets[tid]->touchTreelet();
+        //sums[1] = treelets[tid]->touchTreelet();
+        CALLGRIND_TOGGLE_COLLECT;
+        sums[0] = treelets[tid]->touchTreelet();
+        CALLGRIND_TOGGLE_COLLECT;
+
+        for (int i = 0; i < 3; i++) cout << "touch(" << tid << "): " << sums[i] << endl;
+        return EXIT_SUCCESS;
+#endif
+#if 0
+        for (size_t i = 0; i < treelets.size(); i++) {
+          CALLGRIND_TOGGLE_COLLECT;
+          if (treelets[i]->touchTreelet() == 0) cout << "shouldn't happend\n";
+          CALLGRIND_TOGGLE_COLLECT;
+        }
+        return EXIT_SUCCESS;
+#endif
 
         for (auto &light : lights) {
             light->Preprocess(fakeScene);
@@ -379,6 +411,8 @@ int main(int argc, char const *argv[]) {
                     auto theRayPtr2 = move(rayCopies[i]);
                     const auto nodesVisitedBefore = getNodesVisitedCounter();
                     auto start = chrono::high_resolution_clock::now();
+                    if (treelets[rayTreeletId]->touchTreelet() == 0 || theRayPtr2->ray.touchRay() == 0) cout << "shouldn't happen\n";
+                    if (i >= WARMUP_ITERS) CALLGRIND_TOGGLE_COLLECT;
 #if DO_PERF_STATS
                     perf_record_start();
 #endif
@@ -387,6 +421,7 @@ int main(int argc, char const *argv[]) {
 #if DO_PERF_STATS
                     perf_record_end(&perfSamples[i]);
 #endif
+                    if (i >= WARMUP_ITERS) CALLGRIND_TOGGLE_COLLECT;
                     auto stop = chrono::high_resolution_clock::now();
                     auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
                     if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
@@ -421,7 +456,9 @@ int main(int argc, char const *argv[]) {
             } else if (theRay.HasHit()) {
 #if TIMING_SAMPLES_CNT
                 taskType = TaskTypeShade;
-                for (int i = 0; i < 20; i++) {
+                //for (int i = 0; i < 20; i++) {
+                //}
+                for (int i = 0; i < TIMING_SAMPLES_CNT; i++) {
                     auto theRayPtr2 = move(rayCopies[i]);
                     const auto nodesVisitedBefore = getNodesVisitedCounter();
                     auto start = chrono::high_resolution_clock::now();

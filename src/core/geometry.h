@@ -923,6 +923,14 @@ class RayDifferential : public Ray {
     bool hasDifferentials;
     Point3f rxOrigin, ryOrigin;
     Vector3f rxDirection, ryDirection;
+
+    int touchRay() const {
+      int sum = hasDifferentials + tMax + time;
+      sum += rxOrigin == ryOrigin;
+      sum += rxDirection == ryDirection;
+      sum += (o + d) == o;
+      return sum;
+    }
 };
 
 // Geometry Inline Functions

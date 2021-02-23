@@ -187,7 +187,7 @@ Bounds3f Triangle::WorldBound() const {
 
 bool Triangle::Intersect(const Ray &ray, Float *tHit, SurfaceInteraction *isect,
                          bool testAlphaTexture) const {
-    ProfilePhase p(Prof::TriIntersect);
+    //ProfilePhase p(Prof::TriIntersect);
     ++nTests;
     // Get triangle vertices in _p0_, _p1_, and _p2_
     const Point3f &p0 = mesh->p[v[0]];
@@ -425,7 +425,7 @@ bool Triangle::Intersect(const Ray &ray, Float *tHit, SurfaceInteraction *isect,
 }
 
 bool Triangle::IntersectP(const Ray &ray, bool testAlphaTexture) const {
-    ProfilePhase p(Prof::TriIntersectP);
+    //ProfilePhase p(Prof::TriIntersectP);
     ++nTests;
     // Get triangle vertices in _p0_, _p1_, and _p2_
     const Point3f &p0 = mesh->p[v[0]];

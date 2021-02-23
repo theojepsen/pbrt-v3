@@ -758,4 +758,28 @@ unsigned ComputeIdx(const Vector3f &dir) {
     }
 }
 
+int CloudBVH::touchTreelet() const {
+  const Ray ray;
+  int sum = 0;
+  for (const TreeletNode &node : treelets_[bvh_root_].nodes) {
+    sum += node.bounds.Volume();
+    sum += node.axis;
+    if (node.is_leaf()) {
+      for (int i = node.primitive_offset; i < node.primitive_offset + node.primitive_count; i++) {
+        auto &prim = treelets_[bvh_root_].primitives[i];
+        if (prim->IntersectP(ray)) sum++;
+
+        if (prim->GetType() == PrimitiveType::Transformed) {
+          auto tp = dynamic_cast<TransformedPrimitive *>(prim.get());
+          if (dynamic_pointer_cast<CloudBVH>(tp->GetPrimitive()) != nullptr)
+            sum++;
+        }
+      }
+    } else {
+      sum += node.child_treelet[0] + node.child_treelet[1] + node.child_node[0] + node.child_node[1];
+    }
+  }
+  return sum;
+}
+
 }  // namespace pbrt
