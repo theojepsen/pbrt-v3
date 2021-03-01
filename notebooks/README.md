@@ -2,7 +2,7 @@
 
 Install pip packages:
 
-    sudo pip3 install jupyter tqdm pandas ipython ipywidgets graphviz matplotlib ipympl statsmodels
+    sudo pip3 install jupyter tqdm pandas ipython ipywidgets graphviz matplotlib ipympl statsmodels sklearn
 
 Enable [widgets exetension](https://ipywidgets.readthedocs.io/en/stable/user_install.html):
 
