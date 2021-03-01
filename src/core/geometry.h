@@ -928,7 +928,7 @@ class RayDifferential : public Ray {
       int sum = hasDifferentials + tMax + time;
       sum += rxOrigin == ryOrigin;
       sum += rxDirection == ryDirection;
-      sum += (o + d) == o;
+      sum += (o + d).HasNaNs();
       return sum;
     }
 };
@@ -1427,8 +1427,9 @@ inline bool Bounds3<T>::IntersectP(const Ray &ray, const Vector3f &invDir,
     Float tyMax = (bounds[1 - dirIsNeg[1]].y - ray.o.y) * invDir.y;
 
     // Update _tMax_ and _tyMax_ to ensure robust bounds intersection
-    tMax *= 1 + 2 * gamma(3);
-    tyMax *= 1 + 2 * gamma(3);
+    // XXX omiting this step significantly reduces l1d misses
+    //TMax *= 1 + 2 * 1.78814e-07;//gamma(3);
+    //TyMax *= 1 + 2 * 1.78814e-07;//gamma(3);
     if (tMin > tyMax || tyMin > tMax) return false;
     if (tyMin > tMin) tMin = tyMin;
     if (tyMax < tMax) tMax = tyMax;
@@ -1438,7 +1439,7 @@ inline bool Bounds3<T>::IntersectP(const Ray &ray, const Vector3f &invDir,
     Float tzMax = (bounds[1 - dirIsNeg[2]].z - ray.o.z) * invDir.z;
 
     // Update _tzMax_ to ensure robust bounds intersection
-    tzMax *= 1 + 2 * gamma(3);
+    //tzMax *= 1 + 2 * 1.78814e-07;//gamma(3);
     if (tMin > tzMax || tzMin > tMax) return false;
     if (tzMin > tMin) tMin = tzMin;
     if (tzMax < tMax) tMax = tzMax;

@@ -743,4 +743,25 @@ std::vector<std::shared_ptr<Shape>> CreateTriangleMeshShape(
                               S, N, uvs, alphaTex, shadowAlphaTex, faceIndices);
 }
 
+int Triangle::touchTriangle() const {
+  int sum = Area();
+  Vector3f dpdu, dpdv;
+  Point2f uv[3];
+  GetUVs(uv);
+
+  // Compute deltas for triangle partial derivatives
+  Vector2f duv02 = uv[0] - uv[2], duv12 = uv[1] - uv[2];
+  Float determinant = duv02[0] * duv12[1] - duv02[1] * duv12[0];
+  sum += determinant;
+
+  if (mesh->n) {
+    Normal3f ns = (mesh->n[v[0]] + mesh->n[v[1]] + mesh->n[v[2]]);
+    sum += ns.HasNaNs();
+  }
+  if (mesh->p)
+    sum += (mesh->p[v[0]] + mesh->p[v[1]] + mesh->p[v[2]]).HasNaNs();
+
+  return sum;
+}
+
 }  // namespace pbrt

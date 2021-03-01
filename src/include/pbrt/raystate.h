@@ -82,6 +82,13 @@ class RayState {
     size_t MaxCompressedSize() const;
 
     static RayStatePtr Create();
+
+    int touchRay() const {
+      int sum = isShadowRay + hit;
+      for (int j = toVisitHead - 1; j >= 0; j--)
+        sum += toVisit[j].treelet + toVisit[j].node + toVisit[j].primitive + toVisit[j].transformed;
+      return sum;
+    }
 };
 
 class Sample {

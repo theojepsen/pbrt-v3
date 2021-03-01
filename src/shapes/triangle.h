@@ -101,6 +101,8 @@ class Triangle : public Shape {
 
     ShapeType GetType() const { return ShapeType::Triangle; }
 
+    int touchTriangle() const;
+
   private:
     // Triangle Private Methods
     void GetUVs(Point2f uv[3]) const {

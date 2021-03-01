@@ -281,7 +281,8 @@ void CloudBVH::Trace(RayState &rayState) const {
     int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
 
     const uint32_t currentTreelet = rayState.toVisitTop().treelet;
-    loadTreelet(currentTreelet); /* we don't load any other treelets */
+    // XXX we preload all the treelets before tracing
+    //loadTreelet(currentTreelet); /* we don't load any other treelets */
 
     bool hasTransform = false;
     bool transformChanged = false;
@@ -773,6 +774,17 @@ int CloudBVH::touchTreelet() const {
           auto tp = dynamic_cast<TransformedPrimitive *>(prim.get());
           if (dynamic_pointer_cast<CloudBVH>(tp->GetPrimitive()) != nullptr)
             sum++;
+        }
+        else if (prim->GetType() == PrimitiveType::Geometric) {
+          auto gp = dynamic_cast<GeometricPrimitive *>(prim.get());
+          sum += gp->GetShape()->Area();
+          // XXX we get fewer misses if we *don't* touch the triangle
+#if 0
+          if (gp->GetShape()->GetType() == ShapeType::Triangle) {
+            auto tr = dynamic_cast<const Triangle *>(gp->GetShape());
+            sum += tr->touchTriangle();
+          }
+#endif
         }
       }
     } else {

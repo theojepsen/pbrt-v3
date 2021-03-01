@@ -411,8 +411,12 @@ int main(int argc, char const *argv[]) {
                     auto theRayPtr2 = move(rayCopies[i]);
                     const auto nodesVisitedBefore = getNodesVisitedCounter();
                     auto start = chrono::high_resolution_clock::now();
+                    if (theRayPtr2->touchRay() == -1) cout << "shouldn't happen\n";
                     if (treelets[rayTreeletId]->touchTreelet() == 0 || theRayPtr2->ray.touchRay() == 0) cout << "shouldn't happen\n";
-                    if (i >= WARMUP_ITERS) CALLGRIND_TOGGLE_COLLECT;
+#define COLLECT_FROM_RAY 1
+#define COLLECT_TO_RAY 300
+                    if (i >= WARMUP_ITERS && COLLECT_FROM_RAY <= rayCntr && rayCntr <= COLLECT_TO_RAY) CALLGRIND_TOGGLE_COLLECT;
+                    //cout << "rayCntr: " << rayCntr << "    TID: " << rayTreeletId << endl;
 #if DO_PERF_STATS
                     perf_record_start();
 #endif
@@ -421,7 +425,7 @@ int main(int argc, char const *argv[]) {
 #if DO_PERF_STATS
                     perf_record_end(&perfSamples[i]);
 #endif
-                    if (i >= WARMUP_ITERS) CALLGRIND_TOGGLE_COLLECT;
+                    if (i >= WARMUP_ITERS && COLLECT_FROM_RAY <= rayCntr && rayCntr <= COLLECT_TO_RAY) CALLGRIND_TOGGLE_COLLECT;
                     auto stop = chrono::high_resolution_clock::now();
                     auto elapsed_ns = chrono::duration_cast<chrono::nanoseconds>(stop - start).count();
                     if (elapsed_ns < min_elapsed || min_elapsed == -1) min_elapsed = elapsed_ns;
